@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimi-ui"
+version = "0.1.0"
+description = "Short description." # todo update
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [
+    { name = "Damiano Ricciardi", email = "ricciardi.damiano06@gmail.com" }
+]
+maintainers = [
+    { name = "Damiano Ricciardi", email = "ricciardi.damiano06@gmail.com" }
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: User Interfaces",
+    "Topic :: Software Development :: Libraries :: pygame",
+]
+keywords = ["ui", "user-interface", "immediate-mode"]
+dependencies = [
+    "pygame-ce>=2.5.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/damusss/dimi-ui"
+Documentation = "https://github.com/damusss/dimi-ui" # todo update
+Repository = "https://github.com/damusss/dimi-ui.git"
+Issues = "https://github.com/damusss/dimi-ui/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dimi*"]
+namespaces = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
