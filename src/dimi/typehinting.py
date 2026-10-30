@@ -1,43 +1,65 @@
-from ._canvas import Canvas
-from ._interaction import Interaction, InteractionData
-from ._node import Node
-from ._primitives import (
-    SizeIntent,
-    Size,
-    Measure,
+from dimi._app import (
+    AppStyleOverrides,
+    CachedHitboxes,
+    EmulatedAppStyleOverrides,
+    EmulatedWindowControlsStyleOverrides,
+)
+from dimi._canvas import Canvas
+from dimi._components import Component
+from dimi._entry_line import EntryLineState
+from dimi._icon import (
+    IconifyStyleOverrides,
+    LocalImageStyleOverrides,
+    LocalSVGStyleOverrides,
+    PackedIcon,
+    SVGStyleOverrides,
+    URLImageStyleOverrides,
+    URLSVGStyleOverrides,
+)
+from dimi._interaction import Interaction, InteractionData
+from dimi._node import Node
+from dimi._primitives import (
     DirectionalMeasure,
+    Measure,
+    Size,
+    SizeIntent,
 )
-from ._components import Component
-from ._style import (
-    StyleOverrides,
-    RectStyleOverrides,
+from dimi._scroll import ScrollState, ScrolLStyleOverrides
+from dimi._style import (
     EllipseStyleOverrides,
-    TextStyleOverrides,
     ImageStyleOverrides,
+    RectStyleOverrides,
+    StyleOverrides,
+    TextStyleOverrides,
 )
-from ._entry_line import EntryLineState
 
 __all__ = (
-    # _canvas.py
+    "AppStyleOverrides",
+    "CachedHitboxes",
     "Canvas",
-    # _interaction.py
+    "Component",
+    "DirectionalMeasure",
+    "EllipseStyleOverrides",
+    "EmulatedAppStyleOverrides",
+    "EmulatedWindowControlsStyleOverrides",
+    "EntryLineState",
+    "IconifyStyleOverrides",
+    "ImageStyleOverrides",
     "Interaction",
     "InteractionData",
-    # _node.py
-    "Node",
-    # _primitives.py
-    "SizeIntent",
-    "Size",
+    "LocalImageStyleOverrides",
+    "LocalSVGStyleOverrides",
     "Measure",
-    "DirectionalMeasure",
-    # _components.py
-    "Component",
-    # _style.py
-    "StyleOverrides",
+    "Node",
+    "PackedIcon",
     "RectStyleOverrides",
-    "EllipseStyleOverrides",
+    "SVGStyleOverrides",
+    "ScrolLStyleOverrides",
+    "ScrollState",
+    "Size",
+    "SizeIntent",
+    "StyleOverrides",
     "TextStyleOverrides",
-    "ImageStyleOverrides",
-    # _entry_line.py
-    "EntryLineState",
+    "URLImageStyleOverrides",
+    "URLSVGStyleOverrides",
 )

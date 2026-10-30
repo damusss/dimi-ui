@@ -1,30 +1,33 @@
 import math
 import typing
+import weakref
 
 import pygame
 
-from dimi._interaction import ButtonStatus, HoverStatus
-from dimi._style import Style
 from dimi._components import Component
-from dimi._primitives import (
-    get_directional_measure,
-    SizeIntent,
-    Exact,
-    Percent,
-    Span,
-    Hug,
-    Fill,
-    Axis,
-    Align,
-    L,
-    T,
-    R,
-    B,
-)
 from dimi._error import IllegalOperation
+from dimi._interaction import ButtonStatus, HoverStatus
+from dimi._primitives import (
+    Align,
+    Axis,
+    B,
+    Exact,
+    Fill,
+    Hug,
+    L,
+    Percent,
+    R,
+    Ratio,
+    SizeIntent,
+    Span,
+    T,
+    get_directional_measure,
+)
+from dimi._style import Style
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
+    from dimi._interaction import Interaction
 
 CX = 4
 CY = 5
@@ -52,6 +55,8 @@ class Node:
         self.intrinsic_components: list[list] = []
         self.shape: tuple | list | None = None
 
+        self.interaction: weakref.ref[Interaction] | None = None
+
         # calculated during measure/arrange
         self.measured_width = 0
         self.measured_height = 0
@@ -62,6 +67,7 @@ class Node:
         self.spacing_px: int = 0
         self.absolute_anchors: list[int | None] = [None, None, None, None, None, None]
         self.constrained_size = (None, None, None, None)
+        self.children_overflow: pygame.Vector2 = pygame.Vector2()
 
         # measure/arrange output
         self.absolute_rect: pygame.Rect | None = None
@@ -202,6 +208,7 @@ class Node:
         min_h: float,
         max_h: float,
         parent_axis: Axis | None = Axis.Y,
+        parent_style: Style | None = None,
         parent_spacing: float = 0,
         arrange_measure: bool = False,
     ):
@@ -220,9 +227,6 @@ class Node:
 
         margined_max_w = max(0, max_w - self.margins_px[L] - self.margins_px[R])
         margined_max_h = max(0, max_h - self.margins_px[T] - self.margins_px[B])
-
-        inner_max_w = max(0, margined_max_w - self.pads_px[L] - self.pads_px[R])
-        inner_max_h = max(0, margined_max_h - self.pads_px[T] - self.pads_px[B])
 
         if not arrange_measure:
             constrained_min_w = max(0, min_w - self.margins_px[L] - self.margins_px[R])
@@ -266,6 +270,106 @@ class Node:
                 constrained_max_h,
             )
 
+        max_w_for_inner = margined_max_w
+        max_h_for_inner = margined_max_h
+
+        if arrange_measure:
+            tentative_w = self.measured_width_no_margins
+            tentative_h = self.measured_height_no_margins
+        else:
+            tentative_w = 0
+            tentative_h = 0
+            set_w = False
+            set_h = False
+            w_is_ratio = False
+
+            width = SizeIntent._sizefy(self.style.width)
+
+            if isinstance(width, Exact):
+                tentative_w = width.pixels
+                set_w = True
+            elif isinstance(width, Percent):
+                tentative_w = width._measure(margined_max_w, margined_max_h, Axis.X)
+                set_w = True
+                if parent_style is not None and isinstance(parent_style.width, Hug):
+                    raise IllegalOperation(
+                        "Child with Percent width cannot be measured inside a parent with Hug width"
+                    )
+            elif isinstance(width, Span):
+                tentative_w = (
+                    margined_max_w - (parent_spacing * (width.count - 1))
+                ) * width.weight
+                set_w = True
+                if parent_style is not None and isinstance(parent_style.width, Hug):
+                    raise IllegalOperation(
+                        "Child with Span width cannot be measured inside a parent with Hug width"
+                    )
+            elif isinstance(width, Ratio):
+                w_is_ratio = True
+            elif isinstance(width, Fill):
+                if parent_axis in (Axis.Y, None):
+                    tentative_w = width.weight * margined_max_w
+                    set_w = True
+                if parent_style is not None and isinstance(parent_style.width, Hug):
+                    raise IllegalOperation(
+                        "Child with Fill width cannot be measured inside a parent with Hug width"
+                    )
+
+            height = SizeIntent._sizefy(self.style.height)
+
+            if isinstance(height, Exact):
+                tentative_h = height.pixels
+                set_h = True
+            elif isinstance(height, Percent):
+                tentative_h = height._measure(margined_max_w, margined_max_h, Axis.Y)
+                set_h = True
+                if parent_style is not None and isinstance(parent_style.height, Hug):
+                    raise IllegalOperation(
+                        "Child with Percent height cannot be measured inside a parent with Hug height"
+                    )
+            elif isinstance(height, Span):
+                tentative_h = (
+                    margined_max_h - (parent_spacing * (height.count - 1))
+                ) * height.weight
+                set_h = True
+                if parent_style is not None and isinstance(parent_style.height, Hug):
+                    raise IllegalOperation(
+                        "Child with Span height cannot be measured inside a parent with Hug height"
+                    )
+            elif isinstance(height, Ratio):
+                if not set_w:
+                    raise IllegalOperation(
+                        "Element with Ratio height needs a well defined width of either Exact, Percent, or Span"
+                    )
+                tentative_h = tentative_w / height.ratio
+                set_h = True
+            elif isinstance(height, Fill):
+                if parent_axis in (Axis.X, None):
+                    tentative_h = height.weight * margined_max_h
+                    set_h = True
+                if parent_style is not None and isinstance(parent_style.height, Hug):
+                    raise IllegalOperation(
+                        "Child with Fill height cannot be measured inside a parent with Hug height"
+                    )
+
+            if w_is_ratio:
+                if not set_h:
+                    raise IllegalOperation(
+                        "Element with Ratio width needs a well defined height of either Exact, Percent, or Span"
+                    )
+                tentative_w = tentative_h * width.ratio
+                set_w = True
+
+            self.apply_measure_constrained(tentative_w, tentative_h)
+
+            if set_w:
+                max_w_for_inner = self.measured_width_no_margins
+            if set_h:
+                max_h_for_inner = self.measured_height_no_margins
+
+        inner_max_w = max(0, max_w_for_inner - self.pads_px[L] - self.pads_px[R])
+        inner_max_h = max(0, max_h_for_inner - self.pads_px[T] - self.pads_px[B])
+
         width_paradox_fill = parent_axis == Axis.X and isinstance(
             self.style.width, Fill
         )
@@ -279,51 +383,23 @@ class Node:
         if not paradox_defer_measure:
             for child in self.relative_children:
                 child.measure(
-                    0, inner_max_w, 0, inner_max_h, self.style.axis, self.spacing_px
+                    0,
+                    inner_max_w,
+                    0,
+                    inner_max_h,
+                    self.style.axis,
+                    self.style,
+                    self.spacing_px,
                 )
 
         if arrange_measure:
-            tentative_w = self.measured_width_no_margins
-            tentative_h = self.measured_height_no_margins
-        else:
-            tentative_w = 0
-            tentative_h = 0
+            if width_paradox_fill:
+                tentative_w = margined_max_w
 
-        if not arrange_measure:
-            width = SizeIntent._sizefy(self.style.width)
+            if height_paradox_fill:
+                tentative_h = margined_max_h
 
-            if isinstance(width, Exact):
-                tentative_w = width.pixels
-            elif isinstance(width, Percent):
-                tentative_w = width._measure(margined_max_w, margined_max_h, Axis.X)
-            elif isinstance(width, Span):
-                tentative_w = (
-                    margined_max_w - (parent_spacing * (width.count - 1))
-                ) * width.weight
-            elif parent_axis in (Axis.Y, None) and isinstance(width, Fill):
-                tentative_w = width.weight * margined_max_w
-
-        if arrange_measure and width_paradox_fill:
-            tentative_w = margined_max_w
-
-        if not arrange_measure:
-            height = SizeIntent._sizefy(self.style.height)
-
-            if isinstance(height, Exact):
-                tentative_h = height.pixels
-            elif isinstance(height, Percent):
-                tentative_h = height._measure(margined_max_w, margined_max_h, Axis.Y)
-            elif isinstance(height, Span):
-                tentative_h = (
-                    margined_max_h - (parent_spacing * (height.count - 1))
-                ) * height.weight
-            elif parent_axis in (Axis.X, None) and isinstance(height, Fill):
-                tentative_h = height.weight * margined_max_h
-
-        if arrange_measure and height_paradox_fill:
-            tentative_h = margined_max_h
-
-        self.apply_measure_constrained(tentative_w, tentative_h)
+            self.apply_measure_constrained(tentative_w, tentative_h)
 
         if not arrange_measure:
             biggest_intrinsic_w = 0
@@ -442,12 +518,19 @@ class Node:
                 raise IllegalOperation(
                     "An absolutely positioned element can't fulfill both the central anchor request and either of the later anchors simultaneously."
                 )
-            child.measure(0, anchored_max_w, 0, anchored_max_h, None, self.spacing_px)
+            child.measure(
+                0, anchored_max_w, 0, anchored_max_h, None, None, self.spacing_px
+            )
 
-        # todo worry about wrap
+        # todo implement wrap
 
     def confirm_measure(
-        self, width: float | None, height: float | None, parent_axis, parent_spacing
+        self,
+        width: float | None,
+        height: float | None,
+        parent_axis,
+        parent_style,
+        parent_spacing,
     ):
         if width is not None:
             self.apply_measure_constrained(
@@ -470,6 +553,7 @@ class Node:
                 0,
                 self.measured_height,
                 parent_axis,
+                parent_style,
                 parent_spacing,
                 True,
             )
@@ -484,13 +568,14 @@ class Node:
                 0,
                 self.measured_height,
                 parent_axis,
+                parent_style,
                 parent_spacing,
                 True,
             )
 
-    def arrange(self, x: float, y: float, parent_x, parent_y):
-        x += self.margins_px[L]
-        y += self.margins_px[T]
+    def arrange(self, x: float, y: float, parent_x, parent_y, parent_offset):
+        x += self.margins_px[L] + self.style.self_offset[0] + parent_offset[0]
+        y += self.margins_px[T] + self.style.self_offset[1] + parent_offset[1]
         self.relative_rect = pygame.Rect(
             x,
             y,
@@ -558,6 +643,7 @@ class Node:
                     remaining_w * child.style.width.weight * fill_mult,
                     None,
                     self.style.axis,
+                    self.style,
                     self.spacing_px,
                 )
                 used_w += child.measured_width
@@ -574,6 +660,7 @@ class Node:
                     None,
                     remaining_h * child.style.height.weight * fill_mult,
                     self.style.axis,
+                    self.style,
                     self.spacing_px,
                 )
                 used_h += child.measured_height
@@ -591,6 +678,7 @@ class Node:
             elif self.style.align_children == Align.CENTER:
                 cursor_y = self.measured_height_no_margins / 2 - used_h / 2
 
+        rightmost_opposite = 0
         for child in self.relative_children:
             x = cursor_x
             y = cursor_y
@@ -614,7 +702,26 @@ class Node:
                     )
                 elif child.style.align_self == Align.CENTER:
                     x = self.measured_width_no_margins / 2 - child.measured_width / 2
-            child.arrange(x, y, self.absolute_rect.x, self.absolute_rect.y)
+            child.arrange(
+                x,
+                y,
+                self.absolute_rect.x,
+                self.absolute_rect.y,
+                self.style.children_offset,
+            )
+            if self.style.axis == Axis.X:
+                rightmost_opposite = max(rightmost_opposite, child.relative_rect.bottom)
+            else:
+                rightmost_opposite = max(rightmost_opposite, child.relative_rect.right)
+
+        cursor_x -= self.spacing_px
+        cursor_y -= self.spacing_px
+        if self.style.axis == Axis.X:
+            cursor_y = rightmost_opposite
+        else:
+            cursor_x = rightmost_opposite
+        self.children_overflow.x = max(0, cursor_x - self.relative_rect.w)
+        self.children_overflow.y = max(0, cursor_y - self.relative_rect.h)
 
         for child in self.absolute_children:
             anchor_x = 0
@@ -632,12 +739,22 @@ class Node:
             if child.absolute_anchors[T] is not None:
                 anchor_y = child.absolute_anchors[T]
             elif child.absolute_anchors[B] is not None:
-                anchor_y = self.measured_height_no_margins-child.absolute_anchors[B]-child.measured_width
+                anchor_y = (
+                    self.measured_height_no_margins
+                    - child.absolute_anchors[B]
+                    - child.measured_height
+                )
             elif child.absolute_anchors[CY] is not None:
-                anchor_y = child.absolute_anchors[CY]-child.measured_height/2
+                anchor_y = child.absolute_anchors[CY] - child.measured_height / 2
 
-            child.arrange(anchor_x, anchor_y, self.absolute_rect.x, self.absolute_rect.y)
+            child.arrange(
+                anchor_x,
+                anchor_y,
+                self.absolute_rect.x,
+                self.absolute_rect.y,
+                self.style.children_offset,
+            )
 
         self.context._node_memory[self.id] = self
 
-        # todo worry about wrap
+        # todo implement wrap

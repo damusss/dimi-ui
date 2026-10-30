@@ -1,22 +1,23 @@
+import dataclasses
 import enum
 import typing
-import dataclasses
 
 import pygame
-from dimi._style import (
-    Style,
-    RectStyle,
-    RectStyleOverrides,
-    EllipseStyle,
-    EllipseStyleOverrides,
-    TextStyle,
-    TextStyleOverrides,
-    ImageStyle,
-    ImageStyleOverrides,
-)
-from dimi._primitives import Directions
+
 from dimi._components import Component
 from dimi._error import IllegalOperation
+from dimi._primitives import Directions
+from dimi._style import (
+    EllipseStyle,
+    EllipseStyleOverrides,
+    ImageStyle,
+    ImageStyleOverrides,
+    RectStyle,
+    RectStyleOverrides,
+    Style,
+    TextStyle,
+    TextStyleOverrides,
+)
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
@@ -58,6 +59,7 @@ class InteractionData:
     computed_padding: Directions
     computed_margin: Directions
     computed_spacing: int
+    children_overflow: pygame.Vector2
 
 
 class Interaction:
@@ -72,11 +74,7 @@ class Interaction:
         self.id = self._node.id
 
         self._data: InteractionData | None = None
-        self._data_node: Node | None = (
-            self.context._node_memory[self.id]
-            if self.id in self.context._node_memory
-            else None
-        )
+        self._data_node: Node | None = self.context._node_memory.get(self.id, None)
 
         inherit_node: Node = self._data_node
         if self._data_node is None:
@@ -98,6 +96,7 @@ class Interaction:
         return self.hover_status in (
             HoverStatus.HOVERED,
             HoverStatus.JUST_HOVERED,
+            HoverStatus.JUST_UNHOVERED,
             HoverStatus.BOUNDS,
         )
 
@@ -140,7 +139,13 @@ class Interaction:
         if self._data is None:
             if self._data_node is None:
                 data = InteractionData(
-                    pygame.Rect(), pygame.Rect(), Style(), Directions(), Directions(), 0
+                    pygame.Rect(),
+                    pygame.Rect(),
+                    Style(),
+                    Directions(),
+                    Directions(),
+                    0,
+                    pygame.Vector2(),
                 )
             else:
                 data = InteractionData(
@@ -150,6 +155,7 @@ class Interaction:
                     Directions(*self._data_node.pads_px),
                     Directions(*self._data_node.margins_px),
                     self._data_node.spacing_px,
+                    self._data_node.children_overflow.copy(),
                 )
             self._data = data
             return data

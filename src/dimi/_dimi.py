@@ -1,21 +1,21 @@
-import typing
 import dataclasses
+import typing
 
-from dimi._interaction import Interaction, Button, ButtonStatus
-from dimi._context import Context
 from dimi._components import Component
+from dimi._context import Context
 from dimi._error import IllegalOperation
+from dimi._interaction import Button, ButtonStatus, Interaction
 from dimi._style import (
-    Style,
-    StyleOverrides,
-    RectStyle,
-    RectStyleOverrides,
     EllipseStyle,
     EllipseStyleOverrides,
-    TextStyle,
-    TextStyleOverrides,
     ImageStyle,
     ImageStyleOverrides,
+    RectStyle,
+    RectStyleOverrides,
+    Style,
+    StyleOverrides,
+    TextStyle,
+    TextStyleOverrides,
 )
 
 
@@ -43,7 +43,7 @@ class push_style:
     __module__ = "dimi"
 
     def __init__(
-        self, component: Component | None, **style: typing.Unpack[StyleOverrides]
+        self, component: Component | None = None, **style: typing.Unpack[StyleOverrides]
     ):
         self._component: Component | None = component
         self._style = style
@@ -96,7 +96,9 @@ class push_id:
 
 def _get_context() -> Context:
     if using._current_context is None:
-        raise IllegalOperation("UI operation requires an active context (dimi.use())")
+        raise IllegalOperation(
+            "UI operation requires an active context (with dimi.using(): ...)"
+        )
     return using._current_context
 
 
@@ -180,8 +182,59 @@ def when(
         variant = held
     if hovered is not None and (force_hovered or interaction.hovered):
         variant = hovered
-    if held is not None and interaction.button_status == ButtonStatus.HELD and (button is None or interaction.button == button):
+    if (
+        held is not None
+        and interaction.button_status == ButtonStatus.HELD
+        and (button is None or interaction.button == button)
+    ):
         variant = held
     return variant
 
 
+type NestedAttributesFormat = dict[str, NestedAttributesFormat | typing.Any]
+
+
+def _unflatten_nested_attributes_format(
+    attributes_format: NestedAttributesFormat,
+) -> NestedAttributesFormat:
+    unflattened = {}
+    for key, value in attributes_format.items():
+        if "." in key:
+            main, parts = key.split(".", 1)
+            if main not in unflattened:
+                unflattened[main] = {}
+            if isinstance(unflattened[main], dict):
+                unflattened[main][parts] = value
+            else:
+                unflattened[main] = {parts: value}
+        else:
+            if isinstance(value, dict):
+                value = _unflatten_nested_attributes_format(value)
+            if (
+                key in unflattened
+                and isinstance(unflattened[key], dict)
+                and isinstance(value, dict)
+            ):
+                unflattened[key].update(value)
+            else:
+                unflattened[key] = value
+
+    for key, value in unflattened.items():
+        if isinstance(value, dict):
+            unflattened[key] = _unflatten_nested_attributes_format(value)
+
+    return unflattened
+
+
+def replace_nested_style[StyleDataclassType](
+    style: StyleDataclassType, attributes_format: NestedAttributesFormat
+) -> StyleDataclassType:
+    unflattened_format = _unflatten_nested_attributes_format(attributes_format)
+    changes = {}
+    for key, value in unflattened_format.items():
+        if isinstance(value, dict):
+            changes[key] = replace_nested_style(getattr(style, key), value)
+        else:
+            changes[key] = value
+    style = dataclasses.replace(style, **changes)
+    return style

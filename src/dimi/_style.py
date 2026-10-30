@@ -1,32 +1,32 @@
-import typing
 import dataclasses
+import typing
 
 import pygame
 
 from dimi._primitives import (
-    Constraint,
-    Wrap,
     Absolute,
-    Axis,
     Align,
+    Anchor,
+    Axis,
+    Constraint,
+    Corners,
+    DirectionalMeasure,
+    Fill,
+    Font,
     FontAlign,
     FontDirection,
-    Size,
-    Measure,
-    DirectionalMeasure,
-    Anchor,
-    Corners,
-    Font,
-    Transform,
-    Fill,
-    ScaleQuality,
     ImageFit,
     ImageRepeat,
-NinePatch,
-RenderOrder,
+    Measure,
+    NinePatch,
+    RenderOrder,
+    ScaleQuality,
+    Size,
+    Transform,
+    Wrap,
 )
 
-# todo implement wrapping
+# todo implement element wrapping
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -43,17 +43,20 @@ class Style:
     margin: DirectionalMeasure = 0
     spacing: Measure = 3
 
-    z: int = 0
+    z: float = 0
     blocking: bool = True
     clip_graphics: bool = True
     position: Absolute | None = None
-    offset: pygame.typing.Point = (0, 0)
+
+    self_offset: pygame.typing.Point = (0, 0)
+    children_offset: pygame.typing.Point = (0, 0)
 
     axis: Axis = Axis.Y
     align_children: Align = Align.FIRST
     align_self: Align = Align.FIRST
 
     wrap_children: Wrap | None = None
+
 
 class StyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
@@ -68,11 +71,13 @@ class StyleOverrides(typing.TypedDict, total=False):
     margin: DirectionalMeasure
     spacing: Measure
 
-    z: int
+    z: float
     blocking: bool
     clip_graphics: bool
     position: Absolute | None
-    offset: pygame.typing.Point
+
+    self_offset: pygame.typing.Point
+    children_offset: pygame.typing.Point
 
     axis: Axis
     align_children: Align
@@ -81,7 +86,7 @@ class StyleOverrides(typing.TypedDict, total=False):
     wrap_children: Wrap | None
 
 
-# todo consider dash size/offset. maybe not because border radius is not supported
+# todo consider dash size/offset
 @dataclasses.dataclass(slots=True, frozen=True)
 class RectStyle:
     __module__ = "dimi"
@@ -95,11 +100,12 @@ class RectStyle:
     color: pygame.typing.ColorLike | None = (0, 0, 0, 0)
     antialias: bool = True
 
-    aspect_ratio: float = 0.0
+    aspect_ratio: float | tuple[float, Axis, bool] = 0.0
     anchor: Anchor = Anchor.CENTER
 
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
+    z: float = 0
 
 
 class RectStyleOverrides(typing.TypedDict, total=False):
@@ -114,11 +120,12 @@ class RectStyleOverrides(typing.TypedDict, total=False):
     color: pygame.typing.ColorLike
     antialias: bool
 
-    aspect_ratio: float
+    aspect_ratio: float | tuple[float, Axis, bool]
     anchor: Anchor
 
     shape: bool
     render_order: RenderOrder
+    z: float
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -133,11 +140,12 @@ class EllipseStyle:
     color: pygame.typing.ColorLike | None = (0, 0, 0, 0)
     antialias: bool = True
 
-    aspect_ratio: float = 0.0
+    aspect_ratio: float | tuple[float, Axis, bool] = 0.0
     anchor: Anchor = Anchor.CENTER
 
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
+    z: float = 0
 
 
 class EllipseStyleOverrides(typing.TypedDict, total=False):
@@ -151,11 +159,12 @@ class EllipseStyleOverrides(typing.TypedDict, total=False):
     color: pygame.typing.ColorLike | None
     antialias: bool
 
-    aspect_ratio: float
+    aspect_ratio: float | tuple[float, Axis, bool]
     anchor: Anchor
 
     shape: bool
     render_order: RenderOrder
+    z: float
 
 
 # todo support rich text
@@ -190,6 +199,7 @@ class TextStyle:
     outline_color: pygame.typing.ColorLike = (0, 0, 0, 255)
 
     render_order: RenderOrder = RenderOrder.DEFAULT
+    z: float = 0
 
 
 class TextStyleOverrides(typing.TypedDict, total=False):
@@ -205,7 +215,7 @@ class TextStyleOverrides(typing.TypedDict, total=False):
     align: FontAlign
     direction: FontDirection
     line_skip: int | None
-    wrap: bool = True
+    wrap: bool
 
     bold: bool
     italic: bool
@@ -220,6 +230,7 @@ class TextStyleOverrides(typing.TypedDict, total=False):
     outline_color: pygame.typing.ColorLike | None
 
     render_order: RenderOrder
+    z: float
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -230,7 +241,7 @@ class ImageStyle:
     anchor: Anchor = Anchor.CENTER
     transform: Transform | None = None
 
-    fit: ImageFit | NinePatch = ImageFit.NONE
+    fit: ImageFit | NinePatch = ImageFit.FIT
     repeat: ImageRepeat = ImageRepeat.NONE
     border_radius: Measure | Corners = 0
 
@@ -241,6 +252,8 @@ class ImageStyle:
 
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
+    z: float = 0
+
 
 class ImageStyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
@@ -260,3 +273,4 @@ class ImageStyleOverrides(typing.TypedDict, total=False):
 
     shape: bool
     render_order: RenderOrder
+    z: float

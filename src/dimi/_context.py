@@ -1,18 +1,20 @@
 import dataclasses
+import typing
+import weakref
 
 import pygame
 from pygame import _render
 
 from dimi._canvas import Canvas, RendererCanvas, SurfaceCanvas
-from dimi._style import Style
-from dimi._primitives import Exact, RenderOrder
-from dimi._node import Node
-from dimi._interaction import Interaction, ButtonStatus, HoverStatus
 from dimi._components import (
-    Component,
-    SHAPE_HIT_TEST_CALLBACKS,
     DEFAULT_COMPONENT_STYLE_CLASSES,
+    SHAPE_HIT_TEST_CALLBACKS,
+    Component,
 )
+from dimi._interaction import ButtonStatus, HoverStatus, Interaction
+from dimi._node import Node
+from dimi._primitives import Exact, RenderOrder
+from dimi._style import Style
 
 
 class ContextOrigin:
@@ -42,6 +44,7 @@ class ContextOrigin:
 
 class Context:
     __module__ = "dimi"
+    _widget_event_handler = {}
 
     def __init__(
         self,
@@ -63,9 +66,13 @@ class Context:
         self._element_stack: list[Node] = []
 
         self._node_memory: dict[int, Node] = {}
-        self._widget_memories: dict[str, dict[int, dict]] = {"entry_line": {}}
+        self._widget_memories: dict[str, dict[int, dict]] = {
+            "entry_line": {},
+            "scroll": {},
+        }
 
         self._node: Node | None = None
+        self._dummy_node: Node = Node(self, Style(), 0)
 
         self._hovered_node: Node | None = None
         self._hovered_id: int | None = None
@@ -73,8 +80,6 @@ class Context:
         self._active_id: int | None = None
 
         self._mouse_pos: tuple[int, int] | None = None
-
-        self._dummy_node: Node = Node(self, Style(), 0)
 
     @property
     def viewport(self) -> pygame.Rect:
@@ -85,6 +90,17 @@ class Context:
             canvas_viewport.size,
         )
 
+    def process_events(self, events: typing.Iterable[pygame.Event]):
+        for event in events:
+            self.process_event(event)
+
+    def process_event(self, event: pygame.Event):
+        for kind, memory in self._widget_memories.items():
+            event_handler = Context._widget_event_handler.get(kind, None)
+            if event_handler is not None:
+                for instance in memory.values():
+                    event_handler(event, instance)
+
     def _start(self, style=None):
         viewport = self.viewport
         self._parent_stack = []
@@ -92,6 +108,7 @@ class Context:
         self._node = None
         self._style_stacks = {None: [Style()]}
         self._id_stack = [hash("root")]
+        self.canvas._using_start()
         self._begin(
             style, {"width": Exact(viewport.width), "height": Exact(viewport.height)}
         )
@@ -102,9 +119,10 @@ class Context:
     def _compose_style(self, component: str | None, style, style_overrides):
         if component not in self._style_stacks:
             self._start_style_stack(component)
-        composed_style = self._style_stacks[component][-1]
         if style is not None:
             composed_style = style
+        else:
+            composed_style = self._style_stacks[component][-1]
         if len(style_overrides) > 0:
             composed_style = dataclasses.replace(composed_style, **style_overrides)
         return composed_style
@@ -126,13 +144,16 @@ class Context:
 
     def _element(self, style, style_overrides):
         node = self._create_node(style, style_overrides)
-        return Interaction(self)
+        interaction = Interaction(self)
+        node.interaction = weakref.ref(interaction)
+        return interaction
 
     def _begin(self, style, style_overrides):
         node = self._create_node(style, style_overrides)
         self._parent_stack.append(node)
         interaction = Interaction(self)
         interaction._is_parent = True
+        node.interaction = weakref.ref(interaction)
         self._element_stack.append(node)
         return interaction
 
@@ -165,11 +186,11 @@ class Context:
     def _update_interaction_draw(self, node: Node, parent_viewport):
         viewport = parent_viewport
         if node.style.clip_graphics:
-            viewport = node.absolute_rect.clamp(parent_viewport)
+            viewport = node.absolute_rect.clip(parent_viewport)
             self.canvas.viewport = viewport
         node.render_rect = self.canvas._get_render_rect(node.absolute_rect, viewport)
 
-        fast_hitbox = node.absolute_rect.clamp(parent_viewport)
+        fast_hitbox = node.absolute_rect.clip(parent_viewport)
         if fast_hitbox.collidepoint(self._mouse_pos):
             colliding = True
             if node.shape is not None:
@@ -182,7 +203,9 @@ class Context:
                 if node.style.blocking:
                     self._hovered_node = node
 
-        for comp, data, style, *other in node.components_below:
+        for comp, data, style, *other in sorted(
+            node.components_below, key=lambda c: getattr(c[2], "z", 0)
+        ):
             # todo support custom components and change how the canvas method is checked
             self.canvas._component_render_methods[comp](
                 node.render_rect, data, style, *other
@@ -194,7 +217,9 @@ class Context:
         ):
             self._update_interaction_draw(child, viewport)
 
-        for comp, data, style, *other in node.components_above:
+        for comp, data, style, *other in sorted(
+            node.components_above, key=lambda c: getattr(c[2], "z", 0)
+        ):
             self.canvas._component_render_methods[comp](
                 node.render_rect, data, style, *other
             )
@@ -214,7 +239,7 @@ class Context:
 
         self._node_memory.clear()
         root.measure(0, viewport.width, 0, viewport.height)
-        root.arrange(0, 0, 0, 0)
+        root.arrange(0, 0, 0, 0, (0, 0))
 
         self._hovered_node = None
         mouse = pygame.mouse.get_pos(True)
@@ -223,6 +248,7 @@ class Context:
         self.canvas._render_start()
         self._update_interaction_draw(root, self.canvas.viewport)
         self.canvas._render_end()
+        self.canvas._using_end()
 
         just_pressed = self._get_active_mouse_index(pygame.mouse.get_just_pressed())
         just_released = self._get_active_mouse_index(pygame.mouse.get_just_released())
@@ -268,20 +294,3 @@ class Context:
             if node is not None:
                 node.active_button = self._active_button
                 node.active_status = ButtonStatus.HELD
-
-        # TEST
-        return
-
-        def render_node(node: Node):
-            self.canvas.renderer.draw_color = "green" if node.absolute_hover else "red"
-            if node is self._hovered_node:
-                self.canvas.renderer.draw_color = "pink"
-            self.canvas.renderer.draw_rect(node.absolute_rect)
-            for child in sorted(
-                node.relative_children + node.absolute_children,
-                key=lambda child: child.style.z,
-            ):
-
-                render_node(child)
-
-        render_node(root)

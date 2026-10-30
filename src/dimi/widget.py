@@ -1,18 +1,29 @@
 from dimi._entry_line import (
-    entry_line,
-    EntryLineStyle,
+    EntryLineBindings,
     EntryLineConfig,
+    EntryLineHotkeys,
+    EntryLineInputAnchor,
+    EntryLineStyle,
     EntryLineTarget,
     EntryLineValidator,
-    EntryLineHotkeys,
+    entry_line,
+)
+from dimi._scroll import (
+    ScrollAxis,
+    ScrollStyle,
+    scroll,
 )
 
 __all__ = (
-    # _entry_line.py
-    "entry_line",
-    "EntryLineStyle",
+    "EntryLineBindings",
     "EntryLineConfig",
+    "EntryLineHotkeys",
+    "EntryLineInputAnchor",
+    "EntryLineStyle",
     "EntryLineTarget",
     "EntryLineValidator",
-    "EntryLineHotkeys",
+    "ScrollAxis",
+    "ScrollStyle",
+    "entry_line",
+    "scroll",
 )

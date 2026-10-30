@@ -1,5 +1,5 @@
-import enum
 import dataclasses
+import enum
 
 import pygame
 
@@ -63,7 +63,7 @@ class ImageFit(enum.IntEnum):
     STRETCH = enum.auto()
 
     @classmethod
-    def NINE_PATCH(cls, inset_size: Measure) -> "NinePatch":
+    def NINE_PATCH(cls, inset_size: Measure) -> NinePatch:
         return NinePatch(inset_size)
 
 
@@ -88,18 +88,12 @@ class SizeIntent:
         if isinstance(value, SizeIntent):
             return value
         if isinstance(value, str):
-            if value.endswith("%"):
-                return Percent(float(value[:-1]))
-            else:
-                # todo change this if you need to support dynamic scaling of sorts, but then you wouldn't want strings probably
-                raise ValueError(
-                    "Failed to interpret string as percentage: percentage strings must be a valid number ending with '%'."
-                )
+            return Percent(value)
         return Exact(value)
 
     def _measure(self, relative_x: float, relative_y: float, default_axis=None):
         raise IllegalOperation(
-            "This size intent isn't designed to be used as a measure."
+            f"The {type(self).__name__} size intent isn't designed to be used as a measure"
         )
 
 
@@ -131,7 +125,7 @@ class Hug(SizeIntent):
         return cls._default_singleton
 
     def __str__(self) -> str:
-        return f"Hug()"
+        return "Hug()"
 
     __repr__ = __str__
 
@@ -162,7 +156,17 @@ class Fill(SizeIntent):
 class Percent(SizeIntent):
     __module__ = "dimi"
 
-    def __init__(self, percent, relative_to: Axis | ChooseAxis = ChooseAxis.DEFAULT):
+    def __init__(
+        self, percent: float | str, relative_to: Axis | ChooseAxis = ChooseAxis.DEFAULT
+    ):
+        if isinstance(percent, str):
+            if percent.endswith("%"):
+                percent = float(percent[:-1])
+            else:
+                # todo change this if you need to support dynamic scaling of sorts using strings
+                raise ValueError(
+                    "Failed to interpret string as percentage: percentage strings must be a valid number ending with '%'."
+                )
         self.weight = percent / 100
         self.relative_to: Axis | ChooseAxis = relative_to
 
@@ -198,6 +202,20 @@ class Span(SizeIntent):
 
     def __str__(self) -> str:
         return f"Span({self.weight * 100}% between {self.count})"
+
+    __repr__ = __str__
+
+
+class Ratio(SizeIntent):
+    __module__ = "dimi"
+
+    def __init__(self, ratio_or_width: float, height: float | None = None):
+        if height is not None:
+            ratio_or_width = ratio_or_width / height
+        self.ratio = ratio_or_width
+
+    def __str__(self):
+        return f"Ratio(width/height = {self.ratio})"
 
     __repr__ = __str__
 
@@ -277,6 +295,7 @@ class Transform:
     angle_origin: pygame.typing.Point | None = None
     scale_origin: pygame.typing.Point | None = None
 
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class NinePatch:
     __module__ = "dimi"
@@ -311,14 +330,15 @@ def get_directional_measure(measure, max_w, max_h, name):
             )
     elif isinstance(measure, Directions):
         return tuple(
-            SizeIntent._sizefy(m)._measure(max_w, max_h)
-            for m in zip(
+            SizeIntent._sizefy(m)._measure(max_w, max_h, axis)
+            for m, axis in zip(
                 (measure.left, measure.top, measure.right, measure.bottom),
                 (Axis.X, Axis.Y, Axis.X, Axis.Y),
             )
         )
     m = SizeIntent._sizefy(measure)._measure(max_w, max_h, Axis.X)
     return (m, m, m, m)
+
 
 def anchor_rect(rect: pygame.Rect, bounds: pygame.Rect, anchor: Anchor):
     setattr(rect, str(anchor), getattr(bounds, str(anchor)))

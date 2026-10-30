@@ -1,24 +1,26 @@
 import enum
+
 import pygame
 
-from dimi._style import RectStyle, EllipseStyle, TextStyle, ImageStyle
 from dimi._primitives import (
-    SizeIntent,
+    BL,
+    BR,
+    TL,
+    TR,
+    Axis,
+    B,
     ChooseAxis,
     Corners,
     ImageFit,
-    NinePatch,
     L,
-    T,
+    NinePatch,
     R,
-    B,
-    TL,
-    TR,
-    BL,
-    BR,
-    get_directional_measure,
+    SizeIntent,
+    T,
     anchor_rect,
+    get_directional_measure,
 )
+from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
 
 
 class Component(enum.StrEnum):
@@ -49,10 +51,7 @@ def image_parse_style(bounds: pygame.Rect, padding, width, height, style: ImageS
         scale_x = scale_y = padded_rect.h / height
     elif style.fit == ImageFit.COVER:
         scale_x = scale_y = max(padded_rect.w / width, padded_rect.h / height)
-    elif style.fit == ImageFit.STRETCH:
-        scale_x = padded_rect.w / width
-        scale_y = padded_rect.h / height
-    elif isinstance(style.fit, NinePatch):
+    elif style.fit == ImageFit.STRETCH or isinstance(style.fit, NinePatch):
         scale_x = padded_rect.w / width
         scale_y = padded_rect.h / height
     fit_rect = pygame.Rect(0, 0, width * scale_x, height * scale_y)
@@ -94,9 +93,18 @@ def rect_parse_style(bounds: pygame.Rect, style: RectStyle):
         bounds.h - padding[T] - padding[B],
     )
     if style.aspect_ratio != 0:
+        control = Axis.X
+        aspect = style.aspect_ratio
+        dofit = True
+        if isinstance(style.aspect_ratio, tuple):
+            aspect, control, dofit = style.aspect_ratio
         aspect_rect = padded_rect.copy()
-        aspect_rect.h = aspect_rect.w / style.aspect_ratio
-        aspect_rect = aspect_rect.fit(padded_rect)
+        if control == Axis.X:
+            aspect_rect.h = aspect_rect.w / aspect
+        else:
+            aspect_rect.w = aspect_rect.h * aspect
+        if dofit:
+            aspect_rect = aspect_rect.fit(padded_rect)
         anchor_rect(aspect_rect, padded_rect, style.anchor)
         padded_rect = aspect_rect
     padded_rect.x += style.offset[0]
@@ -138,9 +146,18 @@ def ellipse_parse_style(bounds: pygame.Rect, style: EllipseStyle):
         bounds.h - padding[T] - padding[B],
     )
     if style.aspect_ratio != 0:
+        control = Axis.X
+        aspect = style.aspect_ratio
+        dofit = True
+        if isinstance(style.aspect_ratio, tuple):
+            aspect, control, dofit = style.aspect_ratio
         aspect_rect = padded_rect.copy()
-        aspect_rect.h = aspect_rect.w / style.aspect_ratio
-        aspect_rect = aspect_rect.fit(padded_rect)
+        if control == Axis.X:
+            aspect_rect.h = aspect_rect.w / aspect
+        else:
+            aspect_rect.w = aspect_rect.h * aspect
+        if dofit:
+            aspect_rect = aspect_rect.fit(padded_rect)
         anchor_rect(aspect_rect, padded_rect, style.anchor)
         padded_rect = aspect_rect
     padded_rect.x += style.offset[0]

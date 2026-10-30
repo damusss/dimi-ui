@@ -3,3 +3,4 @@ build/
 .venv/
 *.egg-info/
 .idea/
+test.py

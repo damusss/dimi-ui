@@ -6,31 +6,31 @@ from abc import ABC, abstractmethod
 import pygame
 from pygame import _render
 
-from dimi._primitives import (
-    SizeIntent,
-    Axis,
-    Font,
-    ScaleQuality,
-    ImageRepeat,
-    L,
-    T,
-    B,
-    R,
-    TL,
-    BL,
-    BR,
-    TR,
-    get_directional_measure,
-    anchor_rect,
-)
-from dimi._style import RectStyle, EllipseStyle, TextStyle, ImageStyle
 from dimi._components import (
     Component,
-    rect_parse_style,
     ellipse_parse_style,
     image_parse_style,
+    rect_parse_style,
 )
 from dimi._error import IllegalOperation
+from dimi._primitives import (
+    BL,
+    BR,
+    TL,
+    TR,
+    Axis,
+    B,
+    Font,
+    ImageRepeat,
+    L,
+    R,
+    ScaleQuality,
+    SizeIntent,
+    T,
+    anchor_rect,
+    get_directional_measure,
+)
+from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
 
 
 class Canvas(ABC):
@@ -39,6 +39,8 @@ class Canvas(ABC):
     def __init__(self):
         self._component_render_methods: dict[str, typing.Callable] = {}
         self._fonts: dict[tuple[str, bool, bool, bool] | None, pygame.Font] = {}
+        self._icon_cache = {}
+        self._icon_pinged = set()
 
     def _get_font(self, font: Font | None):
         if font is None:
@@ -200,8 +202,14 @@ class Canvas(ABC):
     @abstractmethod
     def _get_render_rect(
         self, absolute_rect: pygame.Rect, viewport: pygame.Rect
-    ) -> pygame.Rect:
-        pass
+    ) -> pygame.Rect: ...
+
+    def _using_start(self):
+        self._icon_pinged = set(self._icon_cache.keys())
+
+    def _using_end(self):
+        for key in self._icon_pinged:
+            self._icon_cache.pop(key)
 
     @abstractmethod
     def _render_start(self): ...
@@ -213,6 +221,9 @@ class Canvas(ABC):
     def _resolve_text(
         self, cache_key: int, text: str, style: TextStyle, wrap_width: int, height: int
     ) -> tuple[int, int]: ...
+
+    @abstractmethod
+    def _get_image_1pixels(self): ...
 
 
 class RendererCanvas(Canvas):
@@ -252,6 +263,12 @@ class RendererCanvas(Canvas):
         ] = {}
         self._pinged_radius_image_layers: set[tuple[int, int, tuple]] = set()
 
+        self._texture_1pixels = _render.Texture(self.renderer, (1, 1), 32)
+        self._texture_1pixels.blend_mode = pygame.BLENDMODE_BLEND
+        surf_1pixels = pygame.Surface((1, 1), pygame.SRCALPHA)
+        surf_1pixels.fill(0)
+        self._texture_1pixels.update(surf_1pixels)
+
     @property
     def viewport(self) -> pygame.Rect:
         return self.renderer.get_viewport()
@@ -282,6 +299,9 @@ class RendererCanvas(Canvas):
             self._cached_text.pop(key)
         for key in self._pinged_radius_image_layers:
             self._cached_radius_image_layers.pop(key)
+
+    def _get_image_1pixels(self):
+        return self._texture_1pixels
 
     def _render_image(
         self, bounds: pygame.Rect, image: _render.Texture, style: ImageStyle, padding
@@ -734,13 +754,19 @@ class RendererCanvas(Canvas):
         surface, rect, padding = self._create_text_render(
             text, style, wrap_width, height
         )
-        texture = _render.Texture(
-            self.renderer, surface.size, 32, scale_quality=1 if style.antialias else 0
-        )
-        texture.update(surface)
-        texture.blend_mode = pygame.BLENDMODE_BLEND
+        if surface.size[0] <= 0 or surface.size[1] <= 0:
+            texture = self._texture_1pixels
+        else:
+            texture = _render.Texture(
+                self.renderer,
+                surface.size,
+                32,
+                scale_quality=1 if style.antialias else 0,
+            )
+            texture.update(surface)
+            texture.blend_mode = pygame.BLENDMODE_BLEND
         self._cached_text[cache_key] = (texture, rect, padding)
-        return (rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B])
+        return rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B]
 
     def _render_text(
         self, bounds: pygame.Rect, text: str, style: TextStyle, cache_key: int
@@ -817,14 +843,13 @@ class RendererCanvas(Canvas):
         self._pinged_ellipse_corners.discard(qw_qh_bw_antialias)
         return self._cached_ellipse_corners[qw_qh_bw_antialias]
 
-    # todo: draw a vertical and horizontal line avoiding middle line gaps
     def _render_ellipse(self, bounds: pygame.Rect, _, style: EllipseStyle):
         if style.color is None:
             return
         padded_rect, border_width = ellipse_parse_style(bounds, style)
-        if padded_rect.w == 0 or padded_rect.h == 0:
-            return
         quarter_w, quarter_h = round(padded_rect.w / 2), round(padded_rect.h / 2)
+        if quarter_w <= 0 or quarter_h <= 0:
+            return
         quarter = self._get_ellipse_quarter(
             (quarter_w, quarter_h, border_width, style.antialias)
         )
@@ -851,12 +876,21 @@ class RendererCanvas(Canvas):
             flip_x=True,
             flip_y=True,
         )
+        self.renderer.draw_color = style.color
+        self.renderer.draw_line(
+            (padded_rect.left + quarter_w, padded_rect.top),
+            (padded_rect.left + quarter_w, padded_rect.bottom - 1),
+        )
+        self.renderer.draw_line(
+            (padded_rect.left, padded_rect.top + quarter_h),
+            (padded_rect.right - 1, padded_rect.top + quarter_h),
+        )
 
     def _render_rect(self, bounds: pygame.Rect, _, style: RectStyle):
         if style.color is None:
             return
         padded_rect, border_width, radius = rect_parse_style(bounds, style)
-        if padded_rect.w == 0 or padded_rect.h == 0:
+        if padded_rect.w <= 0 or padded_rect.h <= 0:
             return
         self.renderer.draw_color = style.color
         if all(br == 0 for br in radius):
@@ -986,7 +1020,6 @@ class RendererCanvas(Canvas):
 class SurfaceCanvas(Canvas):
     __module__ = "dimi"
 
-
     def __init__(self, surface: pygame.Surface):
         super().__init__()
         self.surface: pygame.Surface = surface
@@ -1001,6 +1034,8 @@ class SurfaceCanvas(Canvas):
             tuple[int, int, int, tuple], pygame.Surface
         ] = {}
         self._pinged_antialiased_ellipses: set[tuple[int, int, int, tuple]] = set()
+        self._surface_1pixels = pygame.Surface((1, 1), pygame.SRCALPHA)
+        self._surface_1pixels.fill(0)
 
     @property
     def viewport(self) -> pygame.Rect:
@@ -1014,6 +1049,9 @@ class SurfaceCanvas(Canvas):
         self, absolute_rect: pygame.Rect, viewport: pygame.Rect
     ) -> pygame.Rect:
         return absolute_rect
+
+    def _get_image_1pixels(self):
+        return self._surface_1pixels
 
     def _render_start(self):
         self._pinged_text_cache_keys = set(self._cached_text.keys())
@@ -1207,11 +1245,15 @@ class SurfaceCanvas(Canvas):
                     padded_rect.h - radius[TL] - radius[BL],
                 ),
             )
-            pygame.draw.rect(self.surface, style.color,
+            pygame.draw.rect(
+                self.surface,
+                style.color,
                 (
                     padded_rect.right - height,
                     padded_rect.y + radius[TR],
                     height,
                     padded_rect.h - radius[TR] - radius[BR],
-                )
+                ),
             )
+
+    # todo: support image component
