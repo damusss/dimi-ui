@@ -29,7 +29,7 @@ limited only by a couple of layout rules required to keep the two-pass system ef
 
 ## Installation & Import
 
-Install the latest version thorugh PyPI or clone & install from source
+Install the latest version thorugh PyPI or clone & install from source:
 
 ```bash
 pip install dimi-ui

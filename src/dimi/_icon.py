@@ -126,6 +126,7 @@ class URLImageStyle:
     __module__ = "dimi.icon"
 
     tint: pygame.typing.ColorLike | None = None
+    size: tuple[float, float] | tuple[float, None] | tuple[None, float] | None = None
     load_namehint: str = ""
     async_fetch: bool = True
     bytes_fetcher: typing.Callable[[str], bytes] | None = None
@@ -136,6 +137,7 @@ class URLImageStyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
 
     tint: pygame.typing.ColorLike | None
+    size: tuple[float, float] | tuple[float, None] | tuple[None, float] | None
     load_namehint: str
     async_fetch: bool
     bytes_fetcher: typing.Callable[[str], bytes] | None
@@ -147,6 +149,7 @@ class LocalImageStyle:
     __module__ = "dimi.icon"
 
     tint: pygame.typing.ColorLike | None = None
+    size: tuple[float, float] | tuple[float, None] | tuple[None, float] | None = None
     async_load: bool = True
     load_fail_behavior: LoadFailBehavior = LoadFailBehavior.RAISE
 
@@ -155,6 +158,7 @@ class LocalImageStyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
 
     tint: pygame.typing.ColorLike | None
+    size: tuple[float, float] | tuple[float, None] | tuple[None, float] | None
     async_load: bool
     load_fail_behavior: LoadFailBehavior
 
@@ -455,15 +459,26 @@ def rasterize_and_tint_svg(
     return rasterized_surface
 
 
-def tint_surf(
+def tint_and_resize_surf(
     surf: pygame.Surface,
     tint: pygame.typing.ColorLike | None,
+    size: tuple[float | None, float | None] | None,
     renderer: Renderer | None,
 ):
+    if size is not None:
+        w, h = size
+        if w is None or h is None:
+            ratio = surf.width / surf.height
+            if w is None:
+                w = round(h * ratio)
+            elif h is None:
+                h = round(w / ratio)
+        surf = pygame.transform.smoothscale(surf, (w, h))
     if tint is not None:
         tint_surface = pygame.Surface(surf.size, pygame.SRCALPHA)
         tint_surface.fill(tint)
-        surf = surf.copy()
+        if size is None:
+            surf = surf.copy()
         surf.blit(tint_surface, special_flags=pygame.BLEND_RGBA_MULT)
     if renderer is not None:
         tex = Texture(renderer, surf.size, 32, scale_quality=1)
@@ -499,20 +514,24 @@ def svg_rasterize_tint_context_cache(
     return rasterized
 
 
-def surf_tint_context_cache(context, surf, surf_cache_key, style):
+def surf_tint_resize_context_cache(
+    context, surf, surf_cache_key, style: URLImageStyle | LocalImageStyle
+):
     if context is None:
-        return tint_surf(surf, style.tint, None)
+        return tint_and_resize_surf(surf, style.tint, style.size, None)
     tint = style.tint
     if tint is not None:
         tint = pygame.Color(tint).hex
-    canva_key = (surf_cache_key, tint)
+    canva_key = (surf_cache_key, tint, style.size)
     if canva_key in context.canvas._icon_cache:
-        tinted = context.canvas._icon_cache[canva_key]
+        processed = context.canvas._icon_cache[canva_key]
     else:
-        tinted = tint_surf(surf, style.tint, getattr(context.canvas, "renderer", None))
-        context.canvas._icon_cache[canva_key] = tinted
+        processed = tint_and_resize_surf(
+            surf, style.tint, style.size, getattr(context.canvas, "renderer", None)
+        )
+        context.canvas._icon_cache[canva_key] = processed
     context.canvas._icon_pinged.discard(canva_key)
-    return tinted
+    return processed
 
 
 def get_context_for_svg(
@@ -684,6 +703,17 @@ class url_svg:
             return raw_svg
         return svg_rasterize_tint_context_cache(context, raw_svg, svg_cache_key, style)
 
+    @staticmethod
+    def get_cache_path(
+        svg_url: str,
+    ) -> str:
+        svg_cache_key = svg_url
+        cache_folder = get_cache_to("url_svg_cache_to")
+        cache_name = f"{hash_url_key(svg_cache_key)}.svg"
+        if cache_folder is None:
+            return cache_name
+        return os.path.join(cache_folder, cache_name)
+
 
 class local_svg:
     __module__ = "dimi.icon"
@@ -825,7 +855,18 @@ class url_image:
             return image_1pixels
         elif isinstance(surf, Exception):
             raise surf
-        return surf_tint_context_cache(context, surf, surf_cache_key, style)
+        return surf_tint_resize_context_cache(context, surf, surf_cache_key, style)
+
+    @staticmethod
+    def get_cache_path(
+        image_url: str,
+    ) -> str:
+        surf_cache_key = f"url_{image_url}"
+        cache_folder = get_cache_to("url_image_cache_to")
+        cache_name = f"{hash_url_key(surf_cache_key)}.png"
+        if cache_folder is None:
+            return cache_name
+        return os.path.join(cache_folder, cache_name)
 
 
 class local_image:
@@ -880,4 +921,4 @@ class local_image:
             return image_1pixels
         elif isinstance(surf, Exception):
             raise surf
-        return surf_tint_context_cache(context, surf, surf_cache_key, style)
+        return surf_tint_resize_context_cache(context, surf, surf_cache_key, style)

@@ -1,6 +1,8 @@
 __pycache__/
 build/
+dist/
 .venv/
 *.egg-info/
 .idea/
+.env
 test.py
