@@ -1,4 +1,3 @@
-import dataclasses
 import enum
 import typing
 
@@ -49,56 +48,45 @@ class HoverStatus(enum.IntEnum):
     BOUNDS = enum.auto()
 
 
-@dataclasses.dataclass(slots=True)
-class InteractionData:
+DEFAULT_STYLE = Style()
+
+
+class ComputedLayout(typing.NamedTuple):
+    padding: Directions
+    margin: Directions
+    spacing: int
+
     __module__ = "dimi.typehinting"
 
-    relative_rect: pygame.Rect
-    absolute_rect: pygame.Rect
-    style: Style
-    computed_padding: Directions
-    computed_margin: Directions
-    computed_spacing: int
-    children_overflow: pygame.Vector2
+
+HOVERED_STATUSES = (HoverStatus.HOVERED, HoverStatus.JUST_HOVERED)
 
 
 class Interaction:
     __module__ = "dimi.typehinting"
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, memory: Node | None):
         self._is_parent = False
         self._is_element = True
         self._node = context._node
+        self.context: Context = context
 
-        self.context = context
-        self.id = self._node.id
-
-        self._data: InteractionData | None = None
-        self._data_node: Node | None = self.context._node_memory.get(self.id, None)
-
-        inherit_node: Node = self._data_node
-        if self._data_node is None:
+        self._data_node: Node | None = memory
+        inherit_node: Node = memory
+        if memory is None:
             inherit_node = self.context._dummy_node
 
         self.hover_status: HoverStatus = inherit_node.hover_status
-        self.button: Button = Button(inherit_node.active_button)
+        self.button: Button = inherit_node.active_button
         self.button_status: ButtonStatus = inherit_node.active_status
 
     @property
     def hovered(self) -> bool:
-        return self.hover_status in (
-            HoverStatus.HOVERED,
-            HoverStatus.JUST_HOVERED,
-        )
+        return self.hover_status in HOVERED_STATUSES
 
     @property
     def bounds_hovered(self) -> bool:
-        return self.hover_status in (
-            HoverStatus.HOVERED,
-            HoverStatus.JUST_HOVERED,
-            HoverStatus.JUST_UNHOVERED,
-            HoverStatus.BOUNDS,
-        )
+        return self.hover_status != HoverStatus.NONE
 
     @property
     def held(self) -> bool:
@@ -135,31 +123,46 @@ class Interaction:
         )
 
     @property
-    def data(self) -> InteractionData:
-        if self._data is None:
-            if self._data_node is None:
-                data = InteractionData(
-                    pygame.Rect(),
-                    pygame.Rect(),
-                    Style(),
-                    Directions(),
-                    Directions(),
-                    0,
-                    pygame.Vector2(),
-                )
-            else:
-                data = InteractionData(
-                    self._data_node.relative_rect.copy(),
-                    self._data_node.absolute_rect.copy(),
-                    self._data_node.style,
-                    Directions(*self._data_node.pads_px),
-                    Directions(*self._data_node.margins_px),
-                    self._data_node.spacing_px,
-                    self._data_node.children_overflow.copy(),
-                )
-            self._data = data
-            return data
-        return self._data
+    def id(self) -> int:
+        return self._node.id
+
+    @property
+    def relative_rect(self) -> pygame.Rect:
+        if self._data_node is None:
+            return pygame.Rect()
+        return self._data_node.relative_rect
+
+    @property
+    def absolute_rect(self) -> pygame.Rect:
+        if self._data_node is None:
+            return pygame.Rect()
+        return self._data_node.absolute_rect
+
+    @property
+    def style(self) -> Style:
+        if self._data_node is None:
+            return DEFAULT_STYLE
+        return self._data_node.style
+
+    @property
+    def children_overflow(self) -> tuple[float, float]:
+        if self._data_node is None:
+            return 0, 0
+        return self._data_node.children_overflow
+
+    @property
+    def computed(self) -> ComputedLayout:
+        if self._data_node is None:
+            return ComputedLayout(
+                Directions(),
+                Directions(),
+                0,
+            )
+        return ComputedLayout(
+            Directions(*self._data_node.pads_px),
+            Directions(*self._data_node.margins_px),
+            self._data_node.spacing_px,
+        )
 
     def __enter__(self):
         if self._is_element and not self._is_parent:

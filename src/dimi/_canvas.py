@@ -25,10 +25,10 @@ from dimi._primitives import (
     L,
     R,
     ScaleQuality,
-    SizeIntent,
     T,
     anchor_rect,
     get_directional_measure,
+    measure_value,
 )
 from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
 
@@ -77,17 +77,13 @@ class Canvas(ABC):
         if style.size is not None:
             size = max(
                 1,
-                int(
-                    SizeIntent._sizefy(style.size)._measure(
-                        wrap_width, available_h, Axis.Y
-                    )
-                ),
+                int(measure_value(style.size, wrap_width, available_h, Axis.Y)),
             )
             font.point_size = size
         else:
             size = font.point_size
         outline_width = int(
-            SizeIntent._sizefy(style.outline_width)._measure(wrap_width, size, Axis.Y)
+            measure_value(style.outline_width, wrap_width, size, Axis.Y)
         )
         if outline_width != 0:
             padding = (
@@ -101,9 +97,7 @@ class Canvas(ABC):
             font.align = int(style.align)
         font.set_direction(int(style.direction))
         if style.line_skip is not None:
-            font.set_linesize(
-                SizeIntent._sizefy(style.line_skip)._measure(wrap_width, size, Axis.Y)
-            )
+            font.set_linesize(measure_value(style.line_skip, wrap_width, size, Axis.Y))
         if style.italic != font.italic:
             font.italic = style.italic
         if style.bold != font.bold:
@@ -769,7 +763,7 @@ class RendererCanvas(Canvas):
         return rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B]
 
     def _render_text(
-        self, bounds: pygame.Rect, text: str, style: TextStyle, cache_key: int
+        self, bounds: pygame.Rect, _text: str, style: TextStyle, cache_key: int
     ):
         if cache_key not in self._cached_text:
             raise RuntimeError(
@@ -786,7 +780,6 @@ class RendererCanvas(Canvas):
         padded_rect.y += style.offset[1]
         anchor_rect(rect, padded_rect, style.anchor)
         texture.draw(None, rect)
-        self._pinged_text_cache_keys.discard(cache_key)
 
     def _get_circle_corner(self, bw_br_antialias) -> _render.Texture:
         bw, br, antialias = bw_br_antialias
@@ -1078,7 +1071,7 @@ class SurfaceCanvas(Canvas):
         return (rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B])
 
     def _render_text(
-        self, bounds: pygame.Rect, text: str, style: TextStyle, cache_key: int
+        self, bounds: pygame.Rect, _text: str, style: TextStyle, cache_key: int
     ):
         if cache_key not in self._cached_text:
             raise RuntimeError(

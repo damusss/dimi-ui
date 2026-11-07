@@ -1,4 +1,3 @@
-import dataclasses
 import enum
 import os
 import tomllib
@@ -26,8 +25,7 @@ if typing.TYPE_CHECKING:
     from dimi._context import Context
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class AppStyle:
+class AppStyle(typing.NamedTuple):
     __module__ = "dimi.app"
 
     clear_color: pygame.typing.ColorLike | None = "black"
@@ -47,8 +45,7 @@ class AppStyleOverrides(typing.TypedDict, total=False):
     dt_clamp: tuple[float, float] | None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class IconLayout:
+class IconLayout(typing.NamedTuple):
     __module__ = "dimi.app"
 
     top_padding: int = 4
@@ -57,10 +54,7 @@ class IconLayout:
     right_margin: int = 4
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class TitlebarButtonStyle:
-    __module__ = "dimi.app"
-
+class TitlebarButtonStyle(typing.NamedTuple):
     icon: PackedIcon
     icon_size: int = 20
     bg_style: RectStyle | None = None
@@ -70,15 +64,16 @@ class TitlebarButtonStyle:
     icon_hovered_style: ImageStyle | None = None
     icon_held_style: ImageStyle | None = None
 
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class TitlebarButtonStyles:
     __module__ = "dimi.app"
 
+
+class TitlebarButtonStyles(typing.NamedTuple):
     minimize: TitlebarButtonStyle
     maximize: TitlebarButtonStyle
     restore: TitlebarButtonStyle
     close: TitlebarButtonStyle
+
+    __module__ = "dimi.app"
 
 
 MINIMIZE_SVG = """
@@ -107,8 +102,7 @@ CLOSE_SVG = """
 """
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EmulatedAppStyle:
+class EmulatedAppStyle(typing.NamedTuple):
     __module__ = "dimi.app"
 
     target_framerate: float = 144
@@ -228,8 +222,7 @@ class EmulatedAppStyleOverrides(typing.TypedDict, total=False):
     unfocused_button_styles: TitlebarButtonStyles
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class TitlebarButtonLayout:
+class TitlebarButtonLayout(typing.NamedTuple):
     __module__ = "dimi.app"
 
     top_padding: int = 0
@@ -239,8 +232,7 @@ class TitlebarButtonLayout:
     right_margin: int = 0
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class TitlebarButtonLayouts:
+class TitlebarButtonLayouts(typing.NamedTuple):
     __module__ = "dimi.app"
 
     minimize: TitlebarButtonLayout = TitlebarButtonLayout()
@@ -265,8 +257,7 @@ class HitTestResult(enum.Enum):
     CLOSE_BUTTON = enum.auto()
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Cursors:
+class Cursors(typing.NamedTuple):
     __module__ = "dimi.app"
 
     normal = pygame.SYSTEM_CURSOR_ARROW
@@ -283,8 +274,7 @@ class Cursors:
 
 
 # todo: snapping (including top)
-@dataclasses.dataclass(slots=True, frozen=True)
-class EmulatedWindowControlsStyle:
+class EmulatedWindowControlsStyle(typing.NamedTuple):
     __module__ = "dimi.app"
 
     display_usable_bounds: pygame.Rect | None = None  # obsolete in pygame-ce 3
@@ -349,13 +339,12 @@ class EmulatedWindowControlsStyleOverrides(typing.TypedDict, total=False):
     drag_tolerance: int
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class CachedHitboxes:
-    __module__ = "dimi.typehinting"
-
+class CachedHitboxes(typing.NamedTuple):
     titlebar_hitbox: pygame.Rect | None
     resize_hitboxes: dict[HitTestResult, pygame.Rect] | None
     button_hitboxes: tuple[pygame.Rect, pygame.Rect, pygame.Rect] | None
+
+    __module__ = "dimi.typehinting"
 
 
 class EmulatedWindowControls:
@@ -370,7 +359,7 @@ class EmulatedWindowControls:
         self.window = window
         if style is None:
             style = EmulatedWindowControlsStyle()
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
         self.style: EmulatedWindowControlsStyle = style
         usable = self.style.display_usable_bounds  # obsolete in pygame-ce 3
         if usable is None:
@@ -971,7 +960,7 @@ class EmulatedApp:
 
         if style is None:
             style = EmulatedAppStyle()
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
         self.style: EmulatedAppStyle = style
         self.clock: pygame.Clock = pygame.Clock()
         self.dt_s: float = 0
@@ -1183,7 +1172,7 @@ class App:
 
         if style is None:
             style = AppStyle()
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
         self.style: AppStyle = style
         self.clock: pygame.Clock = pygame.Clock()
         self.dt_s: float = 0

@@ -1,4 +1,3 @@
-import dataclasses
 import enum
 import hashlib
 import io
@@ -18,7 +17,7 @@ from dimi._dimi import get_current_context
 DEFAULT_SVG_SIZE = 128
 
 
-# todo consider exporting to dimi.typehinting
+# todo consider exporting to dimi.typehinting or dimi.error
 class IconFetchError(Exception): ...
 
 
@@ -35,8 +34,7 @@ class LoadFailBehavior(enum.Enum):
     RETURN_EMPTY_IMAGE = enum.auto()
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class IconifyStyle:
+class IconifyStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     size: int = DEFAULT_SVG_SIZE
@@ -64,8 +62,7 @@ class IconifyStyleOverrides(typing.TypedDict, total=False):
     get_raw: bool
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class URLSVGStyle:
+class URLSVGStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     size: int = DEFAULT_SVG_SIZE
@@ -85,8 +82,7 @@ class URLSVGStyleOverrides(typing.TypedDict, total=False):
     get_raw: bool
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class LocalSVGStyle:
+class LocalSVGStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     size: int = DEFAULT_SVG_SIZE
@@ -106,8 +102,7 @@ class LocalSVGStyleOverrides(typing.TypedDict, total=False):
     get_raw: bool
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class SVGStyle:
+class SVGStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     size: int = 128
@@ -121,8 +116,7 @@ class SVGStyleOverrides(typing.TypedDict, total=False):
     tint: pygame.typing.ColorLike | None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class URLImageStyle:
+class URLImageStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     tint: pygame.typing.ColorLike | None = None
@@ -144,8 +138,7 @@ class URLImageStyleOverrides(typing.TypedDict, total=False):
     fetch_fail_behavior: FetchFailBehavior
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class LocalImageStyle:
+class LocalImageStyle(typing.NamedTuple):
     __module__ = "dimi.icon"
 
     tint: pygame.typing.ColorLike | None = None
@@ -210,7 +203,7 @@ def iconify_parse_args(
         else:
             style = DEFAULT_ICONIFY_STYLE
     if len(style_overrides) > 0:
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
     return icon_set, style
 
 
@@ -230,7 +223,7 @@ def path_style_parse_args(
         else:
             style = default_style
     if len(style_overrides) > 0:
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
     return path, style
 
 
@@ -246,7 +239,7 @@ def style_parse_args(
         else:
             style = default_style
     if len(style_overrides) > 0:
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
     return style
 
 
@@ -499,7 +492,7 @@ def svg_rasterize_tint_context_cache(
     tint = style.tint
     if tint is not None:
         tint = pygame.Color(tint).hex
-    canva_key = (svg_cache_key, f"{style.size}_{tint}")
+    canva_key = (svg_cache_key, style.size, tint)
     if canva_key in context.canvas._icon_cache:
         rasterized = context.canvas._icon_cache[canva_key]
     else:

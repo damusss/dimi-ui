@@ -1,11 +1,10 @@
-import dataclasses
 import enum
 import typing
 
 import pygame
 
 from dimi._context import Context
-from dimi._dimi import _get_context
+from dimi._dimi import _requires_context_error, using
 from dimi._primitives import Axis
 
 # todo: middle click and drag for auto scrolling like browsers
@@ -20,8 +19,7 @@ class ScrollAxis(enum.StrEnum):
     BOTH_INHERIT_PRIMARY = "both_inherit_primary"
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class ScrollStyle:
+class ScrollStyle(typing.NamedTuple):
     axis: ScrollAxis = ScrollAxis.BOTH_INHERIT_PRIMARY
     opposite_axis_modifier: int | None = pygame.KMOD_SHIFT
     speed: float = 40
@@ -157,14 +155,16 @@ def scroll(
     style: ScrollStyle | None = None,
     **style_overrides: typing.Unpack[ScrolLStyleOverrides],
 ):
-    context = _get_context()
+    context = using._current_context
+    if context is None:
+        _requires_context_error()
     container = context._element_stack[-1]
     interaction = container.interaction()
 
     if style is None:
         style = DEFAULT_SCROLL_STYLE
     if len(style_overrides) > 0:
-        style = dataclasses.replace(style, **style_overrides)
+        style = style._replace(**style_overrides)
 
     id_ = context._id_stack[-1]
     if id_ not in context._widget_memories["scroll"]:
@@ -173,8 +173,8 @@ def scroll(
 
     previous_overflow = self["overflow"]
     self["style"] = style
-    self["overflow"] = interaction.data.children_overflow
-    self["absolute_rect"] = interaction.data.absolute_rect
+    self["overflow"] = pygame.Vector2(interaction.children_overflow)
+    self["absolute_rect"] = interaction.absolute_rect
     self["container_axis"] = container.style.axis
 
     if (
@@ -195,8 +195,8 @@ def scroll(
 
     state = ScrollState(self)
     if style.automatic_children_offset:
-        container.style = dataclasses.replace(
-            container.style, children_offset=state.children_offset
+        container.style = container.style._replace(
+            children_offset=state.children_offset
         )
     return state
 

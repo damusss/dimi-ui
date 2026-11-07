@@ -8,6 +8,7 @@ from dimi._components import Component
 from dimi._error import IllegalOperation
 from dimi._interaction import ButtonStatus, HoverStatus
 from dimi._primitives import (
+    ZERO_DIRECTIONS,
     Align,
     Axis,
     B,
@@ -22,6 +23,7 @@ from dimi._primitives import (
     Span,
     T,
     get_directional_measure,
+    measure_value,
 )
 from dimi._style import Style
 
@@ -41,10 +43,11 @@ MXH = 3
 class Node:
     __module__ = "dimi.typehinting"
 
-    def __init__(self, context, style: Style, id_: int):
+    def __init__(self, context, style: Style, id_: int, style_args):
         # hardcoded from declaration
         self.context: Context = context
         self.style = style
+        self.style_args = style_args
         self.id = id_
 
         # controlled during declaration
@@ -54,7 +57,6 @@ class Node:
         self.components_above: list[tuple | list] = []
         self.intrinsic_components: list[list] = []
         self.shape: tuple | list | None = None
-
         self.interaction: weakref.ref[Interaction] | None = None
 
         # calculated during measure/arrange
@@ -62,12 +64,12 @@ class Node:
         self.measured_height = 0
         self.measured_width_no_margins = 0
         self.measured_height_no_margins = 0
-        self.pads_px: tuple[int, int, int, int] = (0, 0, 0, 0)
-        self.margins_px: tuple[int, int, int, int] = (0, 0, 0, 0)
-        self.spacing_px: int = 0
-        self.absolute_anchors: list[int | None] = [None, None, None, None, None, None]
+        self.pads_px: tuple[float, float, float, float] = (0, 0, 0, 0)
+        self.margins_px: tuple[float, float, float, float] = (0, 0, 0, 0)
+        self.spacing_px: float = 0
+        self.absolute_anchors: list[float | None] = [None, None, None, None, None, None]
         self.constrained_size = (None, None, None, None)
-        self.children_overflow: pygame.Vector2 = pygame.Vector2()
+        self.children_overflow: tuple[float, float] = (0, 0)
 
         # measure/arrange output
         self.absolute_rect: pygame.Rect | None = None
@@ -80,7 +82,8 @@ class Node:
         self.active_status = ButtonStatus.NONE
 
     def resolve_intrinsic_components(self):
-        can_wrap_width = not isinstance(self.style.width, Hug)
+        width_is_hug = type(self.style.width) is Hug
+        height_is_hug = type(self.style.height) is Hug
         biggest_w = 0
         biggest_h = 0
         for component in self.intrinsic_components:
@@ -89,9 +92,7 @@ class Node:
             resolved_h = 0
             if comp == Component.IMAGE:
                 ratio = data.width / data.height
-                if isinstance(self.style.width, Hug) and isinstance(
-                    self.style.height, Hug
-                ):
+                if width_is_hug and height_is_hug:
                     resolved_w = data.width
                     resolved_h = data.height
                     padding = get_directional_measure(
@@ -103,7 +104,7 @@ class Node:
                     resolved_w += padding[L] + padding[R]
                     resolved_h += padding[T] + padding[B]
                     component.append(padding)
-                elif isinstance(self.style.width, Hug):
+                elif width_is_hug:
                     padding = get_directional_measure(
                         style.padding,
                         self.measured_width_no_margins,
@@ -122,7 +123,7 @@ class Node:
                     )
                     resolved_w += padding[L] + padding[R]
                     component.append(padding)
-                elif isinstance(self.style.height, Hug):
+                elif height_is_hug:
                     padding = get_directional_measure(
                         style.padding,
                         self.measured_width_no_margins,
@@ -150,34 +151,30 @@ class Node:
                     )
                     component.append(padding)
             elif comp == Component.TEXT:
-                if can_wrap_width and style.wrap:
+                if not width_is_hug and style.wrap:
                     wrap_width = self.measured_width_no_margins
                 else:
                     wrap_width = 0
                 height = self.measured_height_no_margins
-                if isinstance(style.size, Percent | Span) and isinstance(
-                    self.style.height, Hug
-                ):
+                if isinstance(style.size, Percent | Span) and height_is_hug:
                     raise IllegalOperation(
-                        "Text size can't be a percentage of the height if the element's height is Hug()"
+                        "Text size can't be a percentage or a span of the height if the element's height is Hug()"
                     )
                 cache_key = hash((hash(data), hash(style), wrap_width, height))
                 resolved_w, resolved_h = self.context.canvas._resolve_text(
                     cache_key, data, style, wrap_width, height
                 )
                 component.append(cache_key)
-            if resolved_w > biggest_w:
-                biggest_w = resolved_w
-            if resolved_h > biggest_h:
-                biggest_h = resolved_h
+                self.context.canvas._pinged_text_cache_keys.discard(cache_key)
+            biggest_w = max(biggest_w, resolved_w)
+            biggest_h = max(biggest_h, resolved_h)
 
         return biggest_w, biggest_h
 
     def intrinsic_components_dont_wrap(self):
         for comp, data, style, *other in self.intrinsic_components:
-            if comp == Component.TEXT:
-                if style.wrap:
-                    return False
+            if comp == Component.TEXT and style.wrap:
+                return False
         return True
 
     def apply_measure_constrained(
@@ -185,14 +182,18 @@ class Node:
         width_no_margins,
         height_no_margins,
     ):
-        self.measured_width_no_margins = min(
-            max(width_no_margins, self.constrained_size[MNW]),
-            self.constrained_size[MXW],
-        )
-        self.measured_height_no_margins = min(
-            max(height_no_margins, self.constrained_size[MNH]),
-            self.constrained_size[MXH],
-        )
+        min_w, max_w, min_h, max_h = self.constrained_size
+
+        width = width_no_margins if width_no_margins > min_w else min_w
+        if max_w is not math.inf and width > max_w:
+            width = max_w
+
+        height = height_no_margins if height_no_margins > min_h else min_h
+        if max_h is not math.inf and height > max_h:
+            height = max_h
+
+        self.measured_width_no_margins = width
+        self.measured_height_no_margins = height
 
         self.measured_width = (
             self.measured_width_no_margins + self.margins_px[L] + self.margins_px[R]
@@ -213,54 +214,72 @@ class Node:
         arrange_measure: bool = False,
     ):
         if not arrange_measure:
-            self.margins_px = get_directional_measure(
-                self.style.margin, max_w, max_h, "margin"
-            )
+            margin = self.style.margin
+            if margin == 0:
+                self.margins_px = ZERO_DIRECTIONS
+            elif type(margin) in (int, float):
+                self.margins_px = (margin, margin, margin, margin)
+            else:
+                self.margins_px = get_directional_measure(
+                    self.style.margin, max_w, max_h, "margin"
+                )
 
-            self.pads_px = get_directional_measure(
-                self.style.padding, max_w, max_h, "padding"
-            )
+            padding = self.style.padding
+            if padding == 0:
+                self.pads_px = ZERO_DIRECTIONS
+            elif type(padding) in (int, float):
+                self.pads_px = (padding, padding, padding, padding)
+            else:
+                self.pads_px = get_directional_measure(
+                    self.style.padding, max_w, max_h, "padding"
+                )
 
-            self.spacing_px = SizeIntent._sizefy(self.style.spacing)._measure(
-                max_w, max_h, Axis.X
-            )
+            self.spacing_px = measure_value(self.style.spacing, max_w, max_h, Axis.X)
 
-        margined_max_w = max(0, max_w - self.margins_px[L] - self.margins_px[R])
-        margined_max_h = max(0, max_h - self.margins_px[T] - self.margins_px[B])
+        margined_max_w = max_w - self.margins_px[L] - self.margins_px[R]
+        margined_max_h = max_h - self.margins_px[T] - self.margins_px[B]
+        if margined_max_w < 0:
+            margined_max_w = 0
+        if margined_max_h < 0:
+            margined_max_h = 0
 
         if not arrange_measure:
-            constrained_min_w = max(0, min_w - self.margins_px[L] - self.margins_px[R])
-            constrained_min_h = max(0, min_h - self.margins_px[T] - self.margins_px[B])
+            constrained_min_w = min_w - self.margins_px[L] - self.margins_px[R]
+            constrained_min_h = min_h - self.margins_px[T] - self.margins_px[B]
+            if constrained_min_w < 0:
+                constrained_min_w = 0
+            if constrained_min_h < 0:
+                constrained_min_h = 0
             constrained_max_w = math.inf
             constrained_max_h = math.inf
             if self.style.width_constraint is not None:
                 if self.style.width_constraint.min is not None:
                     constrained_min_w = max(
                         constrained_min_w,
-                        SizeIntent._sizefy(self.style.width_constraint.min)._measure(
-                            max_w, max_h, Axis.X
+                        measure_value(
+                            self.style.width_constraint.min, max_w, max_h, Axis.X
                         ),
                     )
                 if self.style.width_constraint.max is not None:
                     constrained_max_w = min(
                         constrained_max_w,
-                        SizeIntent._sizefy(self.style.width_constraint.max)._measure(
-                            max_w, max_h, Axis.X
+                        measure_value(
+                            self.style.width_constraint.max, max_w, max_h, Axis.X
                         ),
                     )
             if self.style.height_constraint is not None:
                 if self.style.height_constraint.min is not None:
                     constrained_min_h = max(
                         constrained_min_h,
-                        SizeIntent._sizefy(self.style.height_constraint.min)._measure(
-                            max_w, max_h, Axis.Y
+                        measure_value(
+                            self.style.height_constraint.min, max_w, max_h, Axis.Y
                         ),
                     )
                 if self.style.height_constraint.max is not None:
                     constrained_max_h = min(
                         constrained_max_h,
-                        SizeIntent._sizefy(self.style.height_constraint.max)._measure(
-                            max_w, max_h, Axis.Y
+                        measure_value(
+                            self.style.height_constraint.max, max_w, max_h, Axis.Y
                         ),
                     )
             self.constrained_size = (
@@ -283,82 +302,96 @@ class Node:
             set_h = False
             w_is_ratio = False
 
-            width = SizeIntent._sizefy(self.style.width)
+            width_type = type(self.style.width)
+            if type(self.style.width) in (int, float):
+                tentative_w = self.style.width
+                set_w = True
+            else:
+                width = SizeIntent._sizefy(self.style.width)
+                width_type = type(width)
 
-            if isinstance(width, Exact):
-                tentative_w = width.pixels
-                set_w = True
-            elif isinstance(width, Percent):
-                tentative_w = width._measure(margined_max_w, margined_max_h, Axis.X)
-                set_w = True
-                if parent_style is not None and isinstance(parent_style.width, Hug):
-                    raise IllegalOperation(
-                        "Child with Percent width cannot be measured inside a parent with Hug width"
-                    )
-            elif isinstance(width, Span):
-                tentative_w = (
-                    margined_max_w - (parent_spacing * (width.count - 1))
-                ) * width.weight
-                set_w = True
-                if parent_style is not None and isinstance(parent_style.width, Hug):
-                    raise IllegalOperation(
-                        "Child with Span width cannot be measured inside a parent with Hug width"
-                    )
-            elif isinstance(width, Ratio):
-                w_is_ratio = True
-            elif isinstance(width, Fill):
-                if parent_axis in (Axis.Y, None):
-                    tentative_w = width.weight * margined_max_w
+                if width_type is Exact:
+                    tentative_w = width.pixels
                     set_w = True
-                if parent_style is not None and isinstance(parent_style.width, Hug):
-                    raise IllegalOperation(
-                        "Child with Fill width cannot be measured inside a parent with Hug width"
-                    )
+                elif width_type is Percent:
+                    tentative_w = width._measure(margined_max_w, margined_max_h, Axis.X)
+                    set_w = True
+                    if parent_style is not None and type(parent_style.width) is Hug:
+                        raise IllegalOperation(
+                            "Child with Percent width cannot be measured inside a parent with Hug width"
+                        )
+                elif width_type is Span:
+                    tentative_w = (
+                        margined_max_w - (parent_spacing * (width.count - 1))
+                    ) * width.weight
+                    set_w = True
+                    if parent_style is not None and type(parent_style.width) is Hug:
+                        raise IllegalOperation(
+                            "Child with Span width cannot be measured inside a parent with Hug width"
+                        )
+                elif width_type is Ratio:
+                    w_is_ratio = True
+                elif width_type is Fill:
+                    if parent_axis in (Axis.Y, None):
+                        tentative_w = width.weight * margined_max_w
+                        set_w = True
+                    if parent_style is not None and type(parent_style.width) is Hug:
+                        raise IllegalOperation(
+                            "Child with Fill width cannot be measured inside a parent with Hug width"
+                        )
 
-            height = SizeIntent._sizefy(self.style.height)
+            height_type = type(self.style.height)
+            if height_type in (int, float):
+                tentative_h = self.style.height
+                set_h = True
+            else:
+                height = SizeIntent._sizefy(self.style.height)
+                height_type = type(height)
 
-            if isinstance(height, Exact):
-                tentative_h = height.pixels
-                set_h = True
-            elif isinstance(height, Percent):
-                tentative_h = height._measure(margined_max_w, margined_max_h, Axis.Y)
-                set_h = True
-                if parent_style is not None and isinstance(parent_style.height, Hug):
-                    raise IllegalOperation(
-                        "Child with Percent height cannot be measured inside a parent with Hug height"
-                    )
-            elif isinstance(height, Span):
-                tentative_h = (
-                    margined_max_h - (parent_spacing * (height.count - 1))
-                ) * height.weight
-                set_h = True
-                if parent_style is not None and isinstance(parent_style.height, Hug):
-                    raise IllegalOperation(
-                        "Child with Span height cannot be measured inside a parent with Hug height"
-                    )
-            elif isinstance(height, Ratio):
-                if not set_w:
-                    raise IllegalOperation(
-                        "Element with Ratio height needs a well defined width of either Exact, Percent, or Span"
-                    )
-                tentative_h = tentative_w / height.ratio
-                set_h = True
-            elif isinstance(height, Fill):
-                if parent_axis in (Axis.X, None):
-                    tentative_h = height.weight * margined_max_h
+                if height_type is Exact:
+                    tentative_h = height.pixels
                     set_h = True
-                if parent_style is not None and isinstance(parent_style.height, Hug):
-                    raise IllegalOperation(
-                        "Child with Fill height cannot be measured inside a parent with Hug height"
+                elif height_type is Percent:
+                    tentative_h = height._measure(
+                        margined_max_w, margined_max_h, Axis.Y
                     )
+                    set_h = True
+                    if parent_style is not None and type(parent_style.height) is Hug:
+                        raise IllegalOperation(
+                            "Child with Percent height cannot be measured inside a parent with Hug height"
+                        )
+                elif height_type is Span:
+                    tentative_h = (
+                        margined_max_h - (parent_spacing * (height.count - 1))
+                    ) * height.weight
+                    set_h = True
+                    if parent_style is not None and type(parent_style.height) is Hug:
+                        raise IllegalOperation(
+                            "Child with Span height cannot be measured inside a parent with Hug height"
+                        )
+                elif height_type is Ratio:
+                    if not set_w:
+                        raise IllegalOperation(
+                            "Element with Ratio height needs a well defined width of either Exact, Percent, or Span"
+                        )
+                    tentative_h = tentative_w / height.ratio
+                    set_h = True
+                elif height_type is Fill:
+                    if parent_axis in (Axis.X, None):
+                        tentative_h = height.weight * margined_max_h
+                        set_h = True
+                    if parent_style is not None and type(parent_style.height) is Hug:
+                        raise IllegalOperation(
+                            "Child with Fill height cannot be measured inside a parent with Hug height"
+                        )
 
-            if w_is_ratio:
-                if not set_h:
-                    raise IllegalOperation(
-                        "Element with Ratio width needs a well defined height of either Exact, Percent, or Span"
-                    )
-                tentative_w = tentative_h * width.ratio
-                set_w = True
+                if w_is_ratio:
+                    if not set_h:
+                        raise IllegalOperation(
+                            "Element with Ratio width needs a well defined height of either Exact, Percent, or Span"
+                        )
+                    tentative_w = tentative_h * width.ratio
+                    set_w = True
 
             self.apply_measure_constrained(tentative_w, tentative_h)
 
@@ -367,20 +400,26 @@ class Node:
             if set_h:
                 max_h_for_inner = self.measured_height_no_margins
 
-        inner_max_w = max(0, max_w_for_inner - self.pads_px[L] - self.pads_px[R])
-        inner_max_h = max(0, max_h_for_inner - self.pads_px[T] - self.pads_px[B])
+        inner_max_w = max_w_for_inner - self.pads_px[L] - self.pads_px[R]
+        inner_max_h = max_h_for_inner - self.pads_px[T] - self.pads_px[B]
+        if inner_max_w < 0:
+            inner_max_w = 0
+        if inner_max_h < 0:
+            inner_max_h = 0
 
-        width_paradox_fill = parent_axis == Axis.X and isinstance(
-            self.style.width, Fill
-        )
-        height_paradox_fill = parent_axis == Axis.Y and isinstance(
-            self.style.height, Fill
-        )
+        width_paradox_fill = parent_axis == Axis.X and type(self.style.width) is Fill
+
+        height_paradox_fill = parent_axis == Axis.Y and type(self.style.height) is Fill
+
         paradox_defer_measure = not arrange_measure and (
             width_paradox_fill or height_paradox_fill
         )
 
         if not paradox_defer_measure:
+            sum_measured_width = 0
+            sum_measured_height = 0
+            max_measured_width = 0
+            max_measured_height = 0
             for child in self.relative_children:
                 child.measure(
                     0,
@@ -391,6 +430,13 @@ class Node:
                     self.style,
                     self.spacing_px,
                 )
+                cw, ch = child.measured_width, child.measured_height
+                sum_measured_width += cw
+                sum_measured_height += ch
+                if cw > max_measured_width:
+                    max_measured_width = cw
+                if ch > max_measured_height:
+                    max_measured_height = ch
 
         if arrange_measure:
             if width_paradox_fill:
@@ -404,8 +450,8 @@ class Node:
         if not arrange_measure:
             biggest_intrinsic_w = 0
             biggest_intrinsic_h = 0
-            if (
-                not isinstance(width, Fill)
+            if self.intrinsic_components and (
+                width_type is not Fill
                 or parent_axis in (Axis.Y, None)
                 or self.intrinsic_components_dont_wrap()
             ):
@@ -413,35 +459,29 @@ class Node:
                     self.resolve_intrinsic_components()
                 )
 
-            if isinstance(width, Hug):
+            if width_type is Hug:
                 if self.style.axis == Axis.X:
-                    tentative_w = sum(c.measured_width for c in self.relative_children)
-                    tentative_w += self.spacing_px * max(
+                    tentative_w = sum_measured_width + self.spacing_px * max(
                         0, len(self.relative_children) - 1
                     )
                 else:
-                    tentative_w = max(
-                        (c.measured_width for c in self.relative_children), default=0
-                    )
+                    tentative_w = max_measured_width
                 tentative_w += self.pads_px[L] + self.pads_px[R]
-                if tentative_w < biggest_intrinsic_w:
+                if biggest_intrinsic_w > tentative_w:
                     tentative_w = biggest_intrinsic_w
 
-            if isinstance(height, Hug):
+            if height_type is Hug:
                 if self.style.axis == Axis.Y:
-                    tentative_h = sum(c.measured_height for c in self.relative_children)
-                    tentative_h += self.spacing_px * max(
+                    tentative_h = sum_measured_height + self.spacing_px * max(
                         0, len(self.relative_children) - 1
                     )
                 else:
-                    tentative_h = max(
-                        (c.measured_height for c in self.relative_children), default=0
-                    )
+                    tentative_h = max_measured_height
                 tentative_h += self.pads_px[T] + self.pads_px[B]
-                if tentative_h < biggest_intrinsic_h:
+                if biggest_intrinsic_h > tentative_h:
                     tentative_h = biggest_intrinsic_h
 
-            if isinstance(width, Hug) or isinstance(height, Hug):
+            if width_type is Hug or height_type is Hug:
                 self.apply_measure_constrained(tentative_w, tentative_h)
 
         if paradox_defer_measure:
@@ -450,45 +490,50 @@ class Node:
         for child in self.absolute_children:
             anchored_max_w = margined_max_w
             anchored_max_h = margined_max_h
+            cw_is_fill = type(child.style.width) is Fill
+            ch_is_fill = type(child.style.height) is Fill
             if child.style.position.left is not None:
-                child.absolute_anchors[L] = SizeIntent._sizefy(
-                    child.style.position.left
-                )._measure(margined_max_w, margined_max_h, Axis.X)
-                if isinstance(child.style.width, Fill):
+                child.absolute_anchors[L] = measure_value(
+                    child.style.position.left, margined_max_w, margined_max_h, Axis.X
+                )
+                if cw_is_fill:
                     anchored_max_w -= child.absolute_anchors[L]
             if child.style.position.right is not None:
-                child.absolute_anchors[R] = SizeIntent._sizefy(
-                    child.style.position.right
-                )._measure(margined_max_w, margined_max_h, Axis.X)
-                if isinstance(child.style.width, Fill):
+                child.absolute_anchors[R] = measure_value(
+                    child.style.position.right, margined_max_w, margined_max_h, Axis.X
+                )
+                if cw_is_fill:
                     anchored_max_w -= child.absolute_anchors[R]
             if child.style.position.top is not None:
-                child.absolute_anchors[T] = SizeIntent._sizefy(
-                    child.style.position.top
-                )._measure(margined_max_w, margined_max_h, Axis.Y)
-                if isinstance(child.style.height, Fill):
+                child.absolute_anchors[T] = measure_value(
+                    child.style.position.top, margined_max_w, margined_max_h, Axis.Y
+                )
+                if ch_is_fill:
                     anchored_max_h -= child.absolute_anchors[T]
             if child.style.position.bottom is not None:
-                child.absolute_anchors[B] = SizeIntent._sizefy(
-                    child.style.position.bottom
-                )._measure(margined_max_w, margined_max_h, Axis.Y)
-                if isinstance(child.style.height, Fill):
+                child.absolute_anchors[B] = measure_value(
+                    child.style.position.bottom, margined_max_w, margined_max_h, Axis.Y
+                )
+                if ch_is_fill:
                     anchored_max_h -= child.absolute_anchors[B]
             if child.style.position.center_x is not None:
-                child.absolute_anchors[CX] = SizeIntent._sizefy(
-                    child.style.position.center_x
-                )._measure(margined_max_w, margined_max_h, Axis.X)
+                child.absolute_anchors[CX] = measure_value(
+                    child.style.position.center_x,
+                    margined_max_w,
+                    margined_max_h,
+                    Axis.X,
+                )
             if child.style.position.center_y is not None:
-                child.absolute_anchors[CY] = SizeIntent._sizefy(
-                    child.style.position.center_y
-                )._measure(margined_max_w, margined_max_h, Axis.Y)
+                child.absolute_anchors[CY] = measure_value(
+                    child.style.position.center_y,
+                    margined_max_w,
+                    margined_max_h,
+                    Axis.Y,
+                )
             if (
                 child.absolute_anchors[L] is not None
                 and child.absolute_anchors[R] is not None
-                and (
-                    not isinstance(child.style.width, Fill)
-                    or child.style.width.weight != 1
-                )
+                and (not cw_is_fill or child.style.width.weight != 1)
             ):
                 raise IllegalOperation(
                     "An absolutely positioned element can't fulfill both lateral anchor requests simultaneously if the element's width isn't Fill(1)."
@@ -503,10 +548,7 @@ class Node:
             if (
                 child.absolute_anchors[T] is not None
                 and child.absolute_anchors[B] is not None
-                and (
-                    not isinstance(child.style.height, Fill)
-                    or child.style.height.weight != 1
-                )
+                and (not ch_is_fill or child.style.height.weight != 1)
             ):
                 raise IllegalOperation(
                     "An absolutely positioned element can't fulfill both lateral anchor requests simultaneously if the element's height isn't Fill(1)."
@@ -537,12 +579,13 @@ class Node:
                 width - self.margins_px[L] - self.margins_px[R],
                 self.measured_height_no_margins,
             )
-            if not self.intrinsic_components_dont_wrap():
-                biggest_intrinsic_w, biggest_intrinsic_h = (
+            if self.intrinsic_components and not self.intrinsic_components_dont_wrap():
+                _biggest_intrinsic_w, biggest_intrinsic_h = (
                     self.resolve_intrinsic_components()
                 )
-                if self.measured_height_no_margins < biggest_intrinsic_h and isinstance(
-                    self.style.height, Hug
+                if (
+                    self.measured_height_no_margins < biggest_intrinsic_h
+                    and type(self.style.height) is Hug
                 ):
                     self.apply_measure_constrained(
                         self.measured_width_no_margins, biggest_intrinsic_h
@@ -589,6 +632,11 @@ class Node:
             self.measured_height_no_margins,
         )
 
+        if not self.relative_children and not self.absolute_children:
+            self.children_overflow = (0, 0)
+            self.context._node_memory[self.id] = self
+            return
+
         remaining_w = 0
         remaining_h = 0
         total_fill_weight = 0
@@ -598,34 +646,36 @@ class Node:
 
         if self.style.axis == Axis.X:
             for c in self.relative_children:
-                if isinstance(c.style.width, Fill):
+                if type(c.style.width) is Fill:
                     total_fill_weight += c.style.width.weight
                     children_needing_fill.append(c)
                 else:
                     used_w += c.measured_width
             used_w += self.spacing_px * max(0, len(self.relative_children) - 1)
-            remaining_w = max(
-                0,
+            remaining_w = (
                 self.measured_width_no_margins
                 - used_w
                 - self.pads_px[L]
-                - self.pads_px[R],
+                - self.pads_px[R]
             )
+            if remaining_w < 0:
+                remaining_w = 0
         else:  # Axis.Y
             for c in self.relative_children:
-                if isinstance(c.style.height, Fill):
+                if type(c.style.height) is Fill:
                     total_fill_weight += c.style.height.weight
                     children_needing_fill.append(c)
                 else:
                     used_h += c.measured_height
             used_h += self.spacing_px * max(0, len(self.relative_children) - 1)
-            remaining_h = max(
-                0,
+            remaining_h = (
                 self.measured_height_no_margins
                 - used_h
                 - self.pads_px[T]
-                - self.pads_px[B],
+                - self.pads_px[B]
             )
+            if remaining_h < 0:
+                remaining_h = 0
 
         fill_mult = 1
         if self.style.axis == Axis.X:
@@ -648,10 +698,7 @@ class Node:
                 )
                 used_w += child.measured_width
                 used_h += child.measured_height - prev_h
-                if (
-                    isinstance(self.style.height, Hug)
-                    and child.measured_height != prev_h
-                ):
+                if type(self.style.height) is Hug and child.measured_height != prev_h:
                     raise IllegalOperation(
                         "Due to layout complexity it is illegal to create a parent with height Hug() containing a child with width Fill() and height Hug() containing intrinsic text that resizes based on wrap width."
                     )
@@ -678,7 +725,7 @@ class Node:
             elif self.style.align_children == Align.CENTER:
                 cursor_y = self.measured_height_no_margins / 2 - used_h / 2
 
-        rightmost_opposite = 0
+        lastmost_opposite = 0
         for child in self.relative_children:
             x = cursor_x
             y = cursor_y
@@ -710,18 +757,26 @@ class Node:
                 self.style.children_offset,
             )
             if self.style.axis == Axis.X:
-                rightmost_opposite = max(rightmost_opposite, child.relative_rect.bottom)
+                bottom = child.relative_rect.bottom
+                if bottom > lastmost_opposite:
+                    lastmost_opposite = bottom
             else:
-                rightmost_opposite = max(rightmost_opposite, child.relative_rect.right)
+                right = child.relative_rect.right
+                if right > lastmost_opposite:
+                    lastmost_opposite = right
 
         cursor_x -= self.spacing_px
         cursor_y -= self.spacing_px
         if self.style.axis == Axis.X:
-            cursor_y = rightmost_opposite
+            cursor_y = lastmost_opposite
         else:
-            cursor_x = rightmost_opposite
-        self.children_overflow.x = max(0, cursor_x - self.relative_rect.w)
-        self.children_overflow.y = max(0, cursor_y - self.relative_rect.h)
+            cursor_x = lastmost_opposite
+        overflow_x = cursor_x - self.relative_rect.w
+        overflow_y = cursor_y - self.relative_rect.h
+        self.children_overflow = (
+            overflow_x if overflow_x > 0 else 0,
+            overflow_y if overflow_y > 0 else 0,
+        )
 
         for child in self.absolute_children:
             anchor_x = 0

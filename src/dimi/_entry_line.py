@@ -1,4 +1,3 @@
-import dataclasses
 import enum
 import typing
 
@@ -6,7 +5,7 @@ import pygame
 
 from dimi._components import Component
 from dimi._context import Context
-from dimi._dimi import _get_context
+from dimi._dimi import _requires_context_error, using
 from dimi._primitives import (
     Anchor,
     Axis,
@@ -18,9 +17,9 @@ from dimi._primitives import (
     Measure,
     Percent,
     R,
-    SizeIntent,
     T,
     get_directional_measure,
+    measure_value,
 )
 from dimi._style import RectStyle, TextStyle
 
@@ -31,8 +30,7 @@ class EntryLineInputAnchor(enum.IntEnum):
     RIGHT = FontAlign.RIGHT
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EntryLineStyle:
+class EntryLineStyle(typing.NamedTuple):
     __module__ = "dimi.widget"
 
     text_color: pygame.typing.ColorLike = "white"
@@ -57,8 +55,7 @@ class EntryLineValidator(enum.IntEnum):
     WINDOWS_PATH = enum.auto()
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EntryLineHotkeys:
+class EntryLineHotkeys(typing.NamedTuple):
     __module__ = "dimi.widget"
 
     modifier: int = pygame.KMOD_CTRL
@@ -70,8 +67,7 @@ class EntryLineHotkeys:
     redo: int | None = pygame.K_y
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EntryLineBindings:
+class EntryLineBindings(typing.NamedTuple):
     __module__ = "dimi.widget"
 
     left: tuple[int] = (pygame.K_LEFT,)
@@ -85,8 +81,7 @@ class EntryLineBindings:
     whole_words_modifier: int | None = pygame.KMOD_CTRL
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EntryLineConfig:
+class EntryLineConfig(typing.NamedTuple):
     __module__ = "dimi.widget"
 
     target: EntryLineTarget = EntryLineTarget.TEXT
@@ -104,12 +99,6 @@ class EntryLineState:
 
     def __init__(self, _instance: EntryLineDict):
         self._instance = _instance
-        self._submitted: bool = _instance["submitted"]
-        self._edited: bool = _instance["edited"]
-        self._focus_changed: bool = _instance["focus_changed"]
-        _instance["submitted"] = False
-        _instance["edited"] = False
-        _instance["focus_changed"] = False
 
     @property
     def submitted(self) -> bool:
@@ -288,6 +277,18 @@ class EntryLineDict(typing.TypedDict):
     first_mouse_cursor: int | None
     click_time: int
     click_count: int
+    cached_text_size: int
+    cached_placeholder_size: int
+    cached_size_before_cursor: int
+    cached_size_before_start: int
+    cached_size_selected: int
+    cached_font: Font | pygame.Font | None
+    cached_container_size: tuple[int, int]
+    cached_placeholder: str
+    cached_text: str
+    cached_cursor: int
+    cached_selection_start: int | None
+    state: EntryLineState
 
 
 def entry_line_init(
@@ -297,7 +298,7 @@ def entry_line_init(
     style: EntryLineStyle,
     config: EntryLineConfig,
 ) -> EntryLineDict:
-    return {
+    self = {
         "id": id_,
         "text": initial_text,
         "placeholder": placeholder,
@@ -319,7 +320,20 @@ def entry_line_init(
         "first_mouse_cursor": None,
         "click_time": 0,
         "click_count": 1,
+        "cached_text_size": -1,
+        "cached_placeholder_size": -1,
+        "cached_size_before_cursor": -1,
+        "cached_size_before_start": -1,
+        "cached_size_selected": -1,
+        "cached_font": None,
+        "cached_container_size": (0, 0),
+        "cached_placeholder": "",
+        "cached_text": "",
+        "cached_cursor": -1,
+        "cached_selection_start": None,
     }
+    self["state"] = EntryLineState(self)
+    return self
 
 
 def entry_line_save_to_history(self: EntryLineDict):
@@ -701,7 +715,9 @@ def entry_line(
     style: EntryLineStyle | None = None,
     config: EntryLineConfig | None = None,
 ) -> EntryLineState:
-    context = _get_context()
+    context = using._current_context
+    if context is None:
+        _requires_context_error()
     container = context._element_stack[-1]
     interaction = container.interaction()
 
@@ -746,7 +762,7 @@ def entry_line(
         display_color = self["style"].invalid_number_color
 
     text_style: TextStyle = context._style_stacks[Component.TEXT][-1]
-    container_rect = interaction.data.absolute_rect
+    container_rect = interaction.absolute_rect
     padding = get_directional_measure(
         text_style.padding, container_rect.w, container_rect.h, "padding"
     )
@@ -759,15 +775,39 @@ def entry_line(
         font = text_style.font
         height = font.point_size
 
+    font_sizes_dirty = (
+        font != self["cached_font"]
+        or container_rect.size != self["cached_container_size"]
+        or self["cursor"] != self["cached_cursor"]
+        or self["selection_start"] != self["cached_selection_start"]
+        or self["text"] != self["cached_text"]
+        or self["placeholder"] != self["cached_placeholder"]
+    )
+
+    self["cached_font"] = font
+    self["cached_text"] = self["text"]
+    self["cached_placeholder"] = self["placeholder"]
+    self["cached_cursor"] = self["cursor"]
+    self["cached_selection_start"] = self["selection_start"]
+    self["cached_container_size"] = container_rect.size
+
     align_offset = 0
     cursor_align_offset = 0
     text_size = None
     if self["style"].input_anchor != EntryLineInputAnchor.LEFT:
-        text_size = font.size(self["text"])[0]
+        if font_sizes_dirty:
+            text_size = font.size(self["text"])[0]
+            self["cached_text_size"] = text_size
+        else:
+            text_size = self["cached_text_size"]
         available_w = container_rect.w - padding[L] - padding[R]
         placeholder_size = 0
         if self["text"] == "":
-            placeholder_size = font.size(display_text)[0]
+            if font_sizes_dirty:
+                placeholder_size = font.size(display_text)[0]
+                self["cached_placeholder_size"] = placeholder_size
+            else:
+                placeholder_size = self["cached_placeholder_size"]
         if self["style"].input_anchor == EntryLineInputAnchor.CENTER:
             if text_size < available_w:
                 self["offset"] = 0
@@ -780,11 +820,13 @@ def entry_line(
             if self["text"] == "":
                 align_offset -= placeholder_size
 
-    text_before_cursor = self["text"][: self["cursor"]]
-    size_before_cursor = font.size(text_before_cursor)[0]
-    cursor_width = max(
-        1, SizeIntent._sizefy(self["style"].cursor_width)._measure(0, height, Axis.Y)
-    )
+    if font_sizes_dirty:
+        text_before_cursor = self["text"][: self["cursor"]]
+        size_before_cursor = font.size(text_before_cursor)[0]
+        self["cached_size_before_cursor"] = size_before_cursor
+    else:
+        size_before_cursor = self["cached_size_before_cursor"]
+    cursor_width = max(1, measure_value(self["style"].cursor_width, 0, height, Axis.Y))
     cursor_left = padding[L] + size_before_cursor + cursor_align_offset
 
     right_diff = (
@@ -816,6 +858,7 @@ def entry_line(
             mouse_pos[1] - container_rect.y,
         )
         text_mouse = container_mouse[0] - (padding[L] + self["offset"] + align_offset)
+        refresh_cursor_measurements = False
         if text_mouse != self["last_mouse_pos"]:
             if text_size is None:
                 text_size = font.size(self["text"])[0]
@@ -836,6 +879,7 @@ def entry_line(
                     and self["selection_start"] is None
                 ):
                     self["selection_start"] = self["first_mouse_cursor"]
+            refresh_cursor_measurements = True
         if (
             self["first_mouse_cursor"] is not None
             and self["click_count"] > 1
@@ -861,6 +905,12 @@ def entry_line(
                 self["selection_start"] = self["cursor"] + distance_left
                 self["cursor"] = self["cursor"] + distance_right
                 entry_line_redundant_selection(self)
+                refresh_cursor_measurements = True
+        if refresh_cursor_measurements:
+            text_before_cursor = self["text"][: self["cursor"]]
+            size_before_cursor = font.size(text_before_cursor)[0]
+            cursor_left = padding[L] + size_before_cursor + cursor_align_offset
+            font_sizes_dirty = True
     else:
         self["last_mouse_pos"] = None
         self["first_mouse_cursor"] = None
@@ -869,8 +919,14 @@ def entry_line(
         start, end = entry_line_get_selection_cursors(self)
         text_before_start = self["text"][:start]
         text_selected = self["text"][start:end]
-        size_before_start = font.size(text_before_start)[0]
-        size_selected = font.size(text_selected)[0]
+        if font_sizes_dirty:
+            size_before_start = font.size(text_before_start)[0]
+            size_selected = font.size(text_selected)[0]
+            self["cached_size_before_start"] = size_before_start
+            self["cached_size_selected"] = size_selected
+        else:
+            size_before_start = self["cached_size_before_start"]
+            size_selected = self["cached_size_selected"]
         start_left = padding[L] + size_before_start + align_offset
 
         context._component(
@@ -916,8 +972,14 @@ def entry_line(
         self["display_cursor"] = not self["display_cursor"]
         self["blink_time"] = pygame.time.get_ticks()
 
-    result = EntryLineState(self)
-    return result
+    state = self["state"]
+    state._submitted: bool = self["submitted"]
+    state._edited: bool = self["edited"]
+    state._focus_changed: bool = self["focus_changed"]
+    self["submitted"] = False
+    self["edited"] = False
+    self["focus_changed"] = False
+    return state
 
 
 Context._widget_event_handler["entry_line"] = entry_line_event

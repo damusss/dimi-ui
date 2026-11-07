@@ -43,3 +43,4 @@ namespaces = false
 [tool.ruff]
 line-length = 88
 target-version = "py314"
+ignore = ["PLR1730", "FURB136"]

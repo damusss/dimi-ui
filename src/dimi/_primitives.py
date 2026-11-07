@@ -1,5 +1,5 @@
-import dataclasses
 import enum
+import typing
 
 import pygame
 
@@ -85,11 +85,12 @@ class SizeIntent:
 
     @staticmethod
     def _sizefy(value: float | str | SizeIntent) -> SizeIntent:
-        if isinstance(value, SizeIntent):
-            return value
-        if isinstance(value, str):
+        t = type(value)
+        if t is str:
             return Percent(value)
-        return Exact(value)
+        if t is int or t is float:
+            return Exact(value)
+        return value
 
     def _measure(self, relative_x: float, relative_y: float, default_axis=None):
         raise IllegalOperation(
@@ -159,7 +160,7 @@ class Percent(SizeIntent):
     def __init__(
         self, percent: float | str, relative_to: Axis | ChooseAxis = ChooseAxis.DEFAULT
     ):
-        if isinstance(percent, str):
+        if type(percent) is str:
             if percent.endswith("%"):
                 percent = float(percent[:-1])
             else:
@@ -220,8 +221,7 @@ class Ratio(SizeIntent):
     __repr__ = __str__
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Directions:
+class Directions(typing.NamedTuple):
     __module__ = "dimi"
 
     left: Measure = 0
@@ -230,8 +230,7 @@ class Directions:
     bottom: Measure = 0
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Corners:
+class Corners(typing.NamedTuple):
     __module__ = "dimi"
 
     topleft: Measure = 0
@@ -245,16 +244,14 @@ type Measure = Exact | Percent | str | float
 type DirectionalMeasure = Measure | tuple[Measure, Measure] | Directions
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Constraint:
+class Constraint(typing.NamedTuple):
     __module__ = "dimi"
 
     min: Measure | None = None
     max: Measure | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Absolute:
+class Absolute(typing.NamedTuple):
     __module__ = "dimi"
 
     top: Measure | None = None
@@ -265,26 +262,23 @@ class Absolute:
     center_y: Measure | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Wrap:
+class Wrap(typing.NamedTuple):
     __module__ = "dimi"
 
     line_align: Align = Align.FIRST
     line_spacing: Measure = 3
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Font:
-    __module__ = "dimi"
-
+class Font(typing.NamedTuple):
     name: str
     is_sysfont: bool = False
     sysfont_bold: bool = False
     sysfont_italic: bool = False
 
+    __module__ = "dimi"
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Transform:
+
+class Transform(typing.NamedTuple):
     __module__ = "dimi"
 
     offset: pygame.typing.Point = (0, 0)
@@ -296,11 +290,10 @@ class Transform:
     scale_origin: pygame.typing.Point | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class NinePatch:
-    __module__ = "dimi"
-
+class NinePatch(typing.NamedTuple):
     inset_size: Measure
+
+    __module__ = "dimi"
 
 
 TL = 0
@@ -313,28 +306,53 @@ T = 1
 R = 2
 B = 3
 
+ZERO_DIRECTIONS = (0, 0, 0, 0)
+ZERO_CORNERS = (0, 0, 0, 0)
+
 
 def get_directional_measure(measure, max_w, max_h, name):
-    if isinstance(measure, tuple):
+    t = type(measure)
+    if measure == 0:
+        return ZERO_DIRECTIONS
+    if t is int or t is float:
+        return (measure, measure, measure, measure)
+    if t is Directions:
+        left = (
+            measure.left
+            if type(measure.left) in (int, float)
+            else SizeIntent._sizefy(measure.left)._measure(max_w, max_h, Axis.X)
+        )
+        top = (
+            measure.top
+            if type(measure.top) in (int, float)
+            else SizeIntent._sizefy(measure.top)._measure(max_w, max_h, Axis.Y)
+        )
+        right = (
+            measure.right
+            if type(measure.right) in (int, float)
+            else SizeIntent._sizefy(measure.right)._measure(max_w, max_h, Axis.X)
+        )
+        bottom = (
+            measure.bottom
+            if type(measure.bottom) in (int, float)
+            else SizeIntent._sizefy(measure.bottom)._measure(max_w, max_h, Axis.Y)
+        )
+        return (left, top, right, bottom)
+    elif t is tuple:
         if len(measure) == 2:
-            return tuple(
-                SizeIntent._sizefy(m)._measure(max_w, max_h, axis)
-                for m, axis in zip(
-                    (measure[0], measure[1], measure[0], measure[1]),
-                    (Axis.X, Axis.Y, Axis.X, Axis.Y),
-                )
+            m_x = (
+                measure[0]
+                if type(measure[0]) in (int, float)
+                else SizeIntent._sizefy(measure[0])._measure(max_w, max_h, Axis.X)
             )
-        else:
-            raise ValueError(
-                f"A tuple for {name}s must be of the form ({name} x, {name} y)"
+            m_y = (
+                measure[1]
+                if type(measure[1]) in (int, float)
+                else SizeIntent._sizefy(measure[1])._measure(max_w, max_h, Axis.Y)
             )
-    elif isinstance(measure, Directions):
-        return tuple(
-            SizeIntent._sizefy(m)._measure(max_w, max_h, axis)
-            for m, axis in zip(
-                (measure.left, measure.top, measure.right, measure.bottom),
-                (Axis.X, Axis.Y, Axis.X, Axis.Y),
-            )
+            return (m_x, m_y, m_x, m_y)
+        raise ValueError(
+            f"A tuple for {name}s must be of the form ({name} x, {name} y)"
         )
     m = SizeIntent._sizefy(measure)._measure(max_w, max_h, Axis.X)
     return (m, m, m, m)
@@ -342,3 +360,14 @@ def get_directional_measure(measure, max_w, max_h, name):
 
 def anchor_rect(rect: pygame.Rect, bounds: pygame.Rect, anchor: Anchor):
     setattr(rect, str(anchor), getattr(bounds, str(anchor)))
+
+
+def measure_value(
+    value: Measure, max_w: float, max_h: float, axis: Axis | ChooseAxis = Axis.X
+) -> float:
+    t = type(value)
+    if t is int or t is float:
+        return value
+    if t is str:
+        return Percent(value)._measure(max_w, max_h, axis)
+    return value._measure(max_w, max_h, axis)

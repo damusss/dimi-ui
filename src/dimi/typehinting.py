@@ -16,7 +16,7 @@ from dimi._icon import (
     URLImageStyleOverrides,
     URLSVGStyleOverrides,
 )
-from dimi._interaction import Interaction, InteractionData
+from dimi._interaction import ComputedLayout, Interaction
 from dimi._node import Node
 from dimi._primitives import (
     DirectionalMeasure,
@@ -38,6 +38,7 @@ __all__ = (
     "CachedHitboxes",
     "Canvas",
     "Component",
+    "ComputedLayout",
     "DirectionalMeasure",
     "EllipseStyleOverrides",
     "EmulatedAppStyleOverrides",
@@ -46,7 +47,6 @@ __all__ = (
     "IconifyStyleOverrides",
     "ImageStyleOverrides",
     "Interaction",
-    "InteractionData",
     "LocalImageStyleOverrides",
     "LocalSVGStyleOverrides",
     "Measure",

@@ -1,4 +1,3 @@
-import dataclasses
 import typing
 
 import pygame
@@ -29,8 +28,7 @@ from dimi._primitives import (
 # todo implement element wrapping
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class Style:
+class Style(typing.NamedTuple):
     __module__ = "dimi"
 
     width: Size = 0
@@ -56,6 +54,30 @@ class Style:
     align_self: Align = Align.FIRST
 
     wrap_children: Wrap | None = None
+
+    def _fast_replace(self, kwargs) -> Style:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return Style(
+            g("width", self[0]),
+            g("height", self[1]),
+            g("width_constraint", self[2]),
+            g("height_constraint", self[3]),
+            g("padding", self[4]),
+            g("margin", self[5]),
+            g("spacing", self[6]),
+            g("z", self[7]),
+            g("blocking", self[8]),
+            g("clip_graphics", self[9]),
+            g("position", self[10]),
+            g("self_offset", self[11]),
+            g("children_offset", self[12]),
+            g("axis", self[13]),
+            g("align_children", self[14]),
+            g("align_self", self[15]),
+            g("wrap_children", self[16]),
+        )
 
 
 class StyleOverrides(typing.TypedDict, total=False):
@@ -87,8 +109,7 @@ class StyleOverrides(typing.TypedDict, total=False):
 
 
 # todo consider dash size/offset
-@dataclasses.dataclass(slots=True, frozen=True)
-class RectStyle:
+class RectStyle(typing.NamedTuple):
     __module__ = "dimi"
 
     padding: DirectionalMeasure = 0
@@ -106,6 +127,24 @@ class RectStyle:
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
     z: float = 0
+
+    def _fast_replace(self, kwargs) -> RectStyle:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return RectStyle(
+            g("padding", self[0]),
+            g("offset", self[1]),
+            g("border_radius", self[2]),
+            g("border_width", self[3]),
+            g("color", self[4]),
+            g("antialias", self[5]),
+            g("aspect_ratio", self[6]),
+            g("anchor", self[7]),
+            g("shape", self[8]),
+            g("render_order", self[9]),
+            g("z", self[10]),
+        )
 
 
 class RectStyleOverrides(typing.TypedDict, total=False):
@@ -128,8 +167,7 @@ class RectStyleOverrides(typing.TypedDict, total=False):
     z: float
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class EllipseStyle:
+class EllipseStyle(typing.NamedTuple):
     __module__ = "dimi"
 
     padding: DirectionalMeasure = 0
@@ -146,6 +184,23 @@ class EllipseStyle:
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
     z: float = 0
+
+    def _fast_replace(self, kwargs) -> EllipseStyle:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return EllipseStyle(
+            g("padding", self[0]),
+            g("offset", self[1]),
+            g("border_width", self[2]),
+            g("color", self[3]),
+            g("antialias", self[4]),
+            g("aspect_ratio", self[5]),
+            g("anchor", self[6]),
+            g("shape", self[7]),
+            g("render_order", self[8]),
+            g("z", self[9]),
+        )
 
 
 class EllipseStyleOverrides(typing.TypedDict, total=False):
@@ -170,8 +225,7 @@ class EllipseStyleOverrides(typing.TypedDict, total=False):
 # todo support rich text
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class TextStyle:
+class TextStyle(typing.NamedTuple):
     __module__ = "dimi"
 
     font: pygame.Font | Font | None = None
@@ -200,6 +254,33 @@ class TextStyle:
 
     render_order: RenderOrder = RenderOrder.DEFAULT
     z: float = 0
+
+    def _fast_replace(self, kwargs) -> TextStyle:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return TextStyle(
+            g("font", self[0]),
+            g("size", self[1]),
+            g("padding", self[2]),
+            g("anchor", self[3]),
+            g("offset", self[4]),
+            g("align", self[5]),
+            g("direction", self[6]),
+            g("line_skip", self[7]),
+            g("wrap", self[8]),
+            g("bold", self[9]),
+            g("italic", self[10]),
+            g("underline", self[11]),
+            g("strikethrough", self[12]),
+            g("antialias", self[13]),
+            g("color", self[14]),
+            g("background_color", self[15]),
+            g("outline_width", self[16]),
+            g("outline_color", self[17]),
+            g("render_order", self[18]),
+            g("z", self[19]),
+        )
 
 
 class TextStyleOverrides(typing.TypedDict, total=False):
@@ -233,8 +314,7 @@ class TextStyleOverrides(typing.TypedDict, total=False):
     z: float
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class ImageStyle:
+class ImageStyle(typing.NamedTuple):
     __module__ = "dimi"
 
     padding: DirectionalMeasure = 0
@@ -253,6 +333,26 @@ class ImageStyle:
     shape: bool = False
     render_order: RenderOrder = RenderOrder.DEFAULT
     z: float = 0
+
+    def _fast_replace(self, kwargs) -> ImageStyle:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return ImageStyle(
+            g("padding", self[0]),
+            g("anchor", self[1]),
+            g("transform", self[2]),
+            g("fit", self[3]),
+            g("repeat", self[4]),
+            g("border_radius", self[5]),
+            g("scale_quality", self[6]),
+            g("color_modifier", self[7]),
+            g("alpha_modifier", self[8]),
+            g("blend_mode", self[9]),
+            g("shape", self[10]),
+            g("render_order", self[11]),
+            g("z", self[12]),
+        )
 
 
 class ImageStyleOverrides(typing.TypedDict, total=False):

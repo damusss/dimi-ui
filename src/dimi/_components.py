@@ -7,6 +7,7 @@ from dimi._primitives import (
     BR,
     TL,
     TR,
+    ZERO_CORNERS,
     Axis,
     B,
     ChooseAxis,
@@ -15,10 +16,10 @@ from dimi._primitives import (
     L,
     NinePatch,
     R,
-    SizeIntent,
     T,
     anchor_rect,
     get_directional_measure,
+    measure_value,
 )
 from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
 
@@ -31,12 +32,16 @@ class Component(enum.StrEnum):
 
 
 def image_parse_style(bounds: pygame.Rect, padding, width, height, style: ImageStyle):
-    padded_rect = pygame.Rect(
-        bounds.x + padding[L],
-        bounds.y + padding[T],
-        bounds.w - padding[L] - padding[R],
-        bounds.h - padding[T] - padding[B],
-    )
+    if padding == 0:
+        padded_rect = bounds
+    else:
+        padded_rect = pygame.Rect(
+            bounds.x + padding[L],
+            bounds.y + padding[T],
+            bounds.w - padding[L] - padding[R],
+            bounds.h - padding[T] - padding[B],
+        )
+
     scale_x = 1
     scale_y = 1
     if style.fit == ImageFit.NONE:
@@ -51,17 +56,19 @@ def image_parse_style(bounds: pygame.Rect, padding, width, height, style: ImageS
         scale_x = scale_y = padded_rect.h / height
     elif style.fit == ImageFit.COVER:
         scale_x = scale_y = max(padded_rect.w / width, padded_rect.h / height)
-    elif style.fit == ImageFit.STRETCH or isinstance(style.fit, NinePatch):
+    elif style.fit == ImageFit.STRETCH or type(style.fit) is NinePatch:
         scale_x = padded_rect.w / width
         scale_y = padded_rect.h / height
+
     fit_rect = pygame.Rect(0, 0, width * scale_x, height * scale_y)
     anchor_rect(fit_rect, padded_rect, style.anchor)
-    if isinstance(style.border_radius, Corners):
+
+    if style.border_radius == 0:
+        border_radius = ZERO_CORNERS
+    elif isinstance(style.border_radius, Corners):
         border_radius = style.border_radius
         border_radius = tuple(
-            round(
-                SizeIntent._sizefy(br)._measure(fit_rect.w, fit_rect.h, ChooseAxis.MIN)
-            )
+            round(measure_value(br, fit_rect.w, fit_rect.h, ChooseAxis.MIN))
             for br in (
                 border_radius.topleft,
                 border_radius.topright,
@@ -71,27 +78,31 @@ def image_parse_style(bounds: pygame.Rect, padding, width, height, style: ImageS
         )
     else:
         border_radius = round(
-            SizeIntent._sizefy(style.border_radius)._measure(
-                fit_rect.w, fit_rect.h, ChooseAxis.MIN
-            )
+            measure_value(style.border_radius, fit_rect.w, fit_rect.h, ChooseAxis.MIN)
         )
         border_radius = (border_radius, border_radius, border_radius, border_radius)
+
     nine_patch_inset_size = None
     if isinstance(style.fit, NinePatch):
-        nine_patch_inset_size = SizeIntent._sizefy(style.fit.inset_size)._measure(
-            fit_rect.w, fit_rect.h, ChooseAxis.MIN
+        nine_patch_inset_size = measure_value(
+            style.fit.inset_size, fit_rect.w, fit_rect.h, ChooseAxis.MIN
         )
+
     return fit_rect, border_radius, nine_patch_inset_size
 
 
 def rect_parse_style(bounds: pygame.Rect, style: RectStyle):
-    padding = get_directional_measure(style.padding, bounds.w, bounds.h, "padding")
-    padded_rect = pygame.Rect(
-        bounds.x + padding[L],
-        bounds.y + padding[T],
-        bounds.w - padding[L] - padding[R],
-        bounds.h - padding[T] - padding[B],
-    )
+    if style.padding == 0:
+        padded_rect = bounds
+    else:
+        padding = get_directional_measure(style.padding, bounds.w, bounds.h, "padding")
+        padded_rect = pygame.Rect(
+            bounds.x + padding[L],
+            bounds.y + padding[T],
+            bounds.w - padding[L] - padding[R],
+            bounds.h - padding[T] - padding[B],
+        )
+
     if style.aspect_ratio != 0:
         control = Axis.X
         aspect = style.aspect_ratio
@@ -107,19 +118,23 @@ def rect_parse_style(bounds: pygame.Rect, style: RectStyle):
             aspect_rect = aspect_rect.fit(padded_rect)
         anchor_rect(aspect_rect, padded_rect, style.anchor)
         padded_rect = aspect_rect
-    padded_rect.x += style.offset[0]
-    padded_rect.y += style.offset[1]
-    border_width = SizeIntent._sizefy(style.border_width)._measure(
-        bounds.w, bounds.h, ChooseAxis.MIN
-    )
-    if isinstance(style.border_radius, Corners):
+
+    if style.offset != (0, 0):
+        padded_rect = padded_rect.move(style.offset)
+
+    if style.border_width != 0:
+        border_width = measure_value(
+            style.border_width, bounds.w, bounds.h, ChooseAxis.MIN
+        )
+    else:
+        border_width = 0
+
+    if style.border_radius == 0:
+        border_radius = ZERO_CORNERS
+    elif isinstance(style.border_radius, Corners):
         border_radius = style.border_radius
         border_radius = tuple(
-            round(
-                SizeIntent._sizefy(br)._measure(
-                    padded_rect.w, padded_rect.h, ChooseAxis.MIN
-                )
-            )
+            round(measure_value(br, padded_rect.w, padded_rect.h, ChooseAxis.MIN))
             for br in (
                 border_radius.topleft,
                 border_radius.topright,
@@ -129,22 +144,27 @@ def rect_parse_style(bounds: pygame.Rect, style: RectStyle):
         )
     else:
         border_radius = round(
-            SizeIntent._sizefy(style.border_radius)._measure(
-                padded_rect.w, padded_rect.h, ChooseAxis.MIN
+            measure_value(
+                style.border_radius, padded_rect.w, padded_rect.h, ChooseAxis.MIN
             )
         )
         border_radius = (border_radius, border_radius, border_radius, border_radius)
+
     return padded_rect, int(border_width), border_radius
 
 
 def ellipse_parse_style(bounds: pygame.Rect, style: EllipseStyle):
-    padding = get_directional_measure(style.padding, bounds.w, bounds.h, "padding")
-    padded_rect = pygame.Rect(
-        bounds.x + padding[L],
-        bounds.y + padding[T],
-        bounds.w - padding[L] - padding[R],
-        bounds.h - padding[T] - padding[B],
-    )
+    if style.padding == 0:
+        padded_rect = bounds
+    else:
+        padding = get_directional_measure(style.padding, bounds.w, bounds.h, "padding")
+        padded_rect = pygame.Rect(
+            bounds.x + padding[L],
+            bounds.y + padding[T],
+            bounds.w - padding[L] - padding[R],
+            bounds.h - padding[T] - padding[B],
+        )
+
     if style.aspect_ratio != 0:
         control = Axis.X
         aspect = style.aspect_ratio
@@ -160,18 +180,24 @@ def ellipse_parse_style(bounds: pygame.Rect, style: EllipseStyle):
             aspect_rect = aspect_rect.fit(padded_rect)
         anchor_rect(aspect_rect, padded_rect, style.anchor)
         padded_rect = aspect_rect
-    padded_rect.x += style.offset[0]
-    padded_rect.y += style.offset[1]
-    border_width = SizeIntent._sizefy(style.border_width)._measure(
-        bounds.w, bounds.h, ChooseAxis.MIN
-    )
+
+    if style.offset != (0, 0):
+        padded_rect = padded_rect.move(style.offset)
+
+    if style.border_width != 0:
+        border_width = measure_value(
+            style.border_width, bounds.w, bounds.h, ChooseAxis.MIN
+        )
+    else:
+        border_width = 0
+
     return padded_rect, int(border_width)
 
 
 def hit_test_rounded_rect(
     padded_rect: pygame.Rect, mouse_pos: tuple[int, int], radius: tuple
 ):
-    if all(br == 0 for br in radius):
+    if radius == ZERO_CORNERS:
         return padded_rect.collidepoint(mouse_pos)
     for body_rect in (
         (
@@ -231,14 +257,14 @@ def hit_test_rounded_rect(
 
 
 def rect_hit_test(bounds: pygame.Rect, mouse_pos: tuple[int, int], _, style: RectStyle):
-    padded_rect, border_width, radius = rect_parse_style(bounds, style)
+    padded_rect, _border_width, radius = rect_parse_style(bounds, style)
     return hit_test_rounded_rect(padded_rect, mouse_pos, radius)
 
 
 def image_hit_test(
     bounds: pygame.Rect, mouse_pos: tuple[int, int], image, style: ImageStyle, padding
 ):
-    fit_rect, border_radius, ninepatch_inset = image_parse_style(
+    fit_rect, border_radius, _ninepatch_inset = image_parse_style(
         bounds, padding, image.width, image.height, style
     )
     return hit_test_rounded_rect(fit_rect, mouse_pos, border_radius)
@@ -247,7 +273,7 @@ def image_hit_test(
 def ellipse_hit_test(
     bounds: pygame.Rect, mouse_pos: tuple[int, int], _, style: EllipseStyle
 ):
-    padded_rect, border_width = ellipse_parse_style(bounds, style)
+    padded_rect, _border_width = ellipse_parse_style(bounds, style)
     return (
         (((mouse_pos[0] - padded_rect.centerx) ** 2) / ((padded_rect.w / 2) ** 2))
         + (((mouse_pos[1] - padded_rect.centery) ** 2) / ((padded_rect.h / 2) ** 2))
