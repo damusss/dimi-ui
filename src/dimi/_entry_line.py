@@ -5,7 +5,7 @@ import pygame
 
 from dimi._components import Component
 from dimi._context import Context
-from dimi._dimi import _requires_context_error, using
+from dimi._dimi import get_current_context, register_widget
 from dimi._primitives import (
     Anchor,
     Axis,
@@ -22,6 +22,7 @@ from dimi._primitives import (
     measure_value,
 )
 from dimi._style import RectStyle, TextStyle
+from dimi.error import MissingActiveContexError, MissingElementForWidget
 
 
 class EntryLineInputAnchor(enum.IntEnum):
@@ -561,6 +562,11 @@ def entry_line_cut(self: EntryLineDict, save_to_history=True):
         entry_line_erase_selection(self)
 
 
+def entry_line_on_event(event: pygame.Event, context: Context):
+    for state in context.iter_widget_states("entry_line"):
+        entry_line_event(event, state)
+
+
 def entry_line_event(event: pygame.Event, self: EntryLineDict):
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == pygame.BUTTON_LEFT:
         self["request_unfocus"] = 1
@@ -715,23 +721,23 @@ def entry_line(
     style: EntryLineStyle | None = None,
     config: EntryLineConfig | None = None,
 ) -> EntryLineState:
-    context = using._current_context
+    context = get_current_context()
     if context is None:
-        _requires_context_error()
-    container = context._element_stack[-1]
-    interaction = container.interaction()
+        raise MissingActiveContexError()
+    interaction = context.get_last_interaction()
+    if interaction is None:
+        raise MissingElementForWidget("entry_line")
 
     if style is None:
         style = ENTRY_LINE_DEFAULT_STYLE
     if config is None:
         config = ENTRY_LINE_DEFAULT_CONFIG
 
-    id_ = context._id_stack[-1]
-    if id_ not in context._widget_memories["entry_line"]:
-        context._widget_memories["entry_line"][id_] = entry_line_init(
-            id_, initial_text, placeholder, style, config
-        )
-    self: EntryLineDict = context._widget_memories["entry_line"][id_]
+    self: EntryLineDict = context.get_widget_state(
+        "entry_line",
+        entry_line_init,
+        init_args=(initial_text, placeholder, style, config),
+    )
     self["placeholder"] = placeholder
     self["style"] = style
     self["config"] = config
@@ -982,4 +988,4 @@ def entry_line(
     return state
 
 
-Context._widget_event_handler["entry_line"] = entry_line_event
+register_widget("entry_line", on_event=entry_line_on_event)

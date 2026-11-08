@@ -1,23 +1,3 @@
-from dimi._icon import (
-    DynamicPackedIcon,
-    FetchFailBehavior,
-    IconifyStyle,
-    LoadFailBehavior,
-    LocalImageStyle,
-    LocalSVGStyle,
-    StaticPackedIcon,
-    SVGStyle,
-    URLImageStyle,
-    URLSVGStyle,
-    cache_to,
-    iconify,
-    local_image,
-    local_svg,
-    svg,
-    url_image,
-    url_svg,
-)
-
 __all__ = (
     "DynamicPackedIcon",
     "FetchFailBehavior",
@@ -36,4 +16,24 @@ __all__ = (
     "svg",
     "url_image",
     "url_svg",
+)
+
+from dimi._icon import (
+    DynamicPackedIcon,
+    FetchFailBehavior,
+    IconifyStyle,
+    LoadFailBehavior,
+    LocalImageStyle,
+    LocalSVGStyle,
+    StaticPackedIcon,
+    SVGStyle,
+    URLImageStyle,
+    URLSVGStyle,
+    cache_to,
+    iconify,
+    local_image,
+    local_svg,
+    svg,
+    url_image,
+    url_svg,
 )

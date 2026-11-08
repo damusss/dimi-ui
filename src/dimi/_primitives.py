@@ -3,7 +3,7 @@ import typing
 
 import pygame
 
-from dimi._error import IllegalOperation
+from dimi.error import IllegalSizeIntentForMeasure, IllegalSubclassError
 
 
 class Axis(enum.StrEnum):
@@ -74,6 +74,11 @@ class ImageRepeat(enum.IntEnum):
     BOTH = enum.auto()
 
 
+class PointsOrigin(enum.StrEnum):
+    TOPLEFT = "topleft"
+    CENTER = "center"
+
+
 class RenderOrder(enum.IntEnum):
     DEFAULT = enum.auto()
     BELOW_CHILDREN = enum.auto()
@@ -93,16 +98,18 @@ class SizeIntent:
         return value
 
     def _measure(self, relative_x: float, relative_y: float, default_axis=None):
-        raise IllegalOperation(
-            f"The {type(self).__name__} size intent isn't designed to be used as a measure"
-        )
+        raise IllegalSizeIntentForMeasure(type(self).__name__)
 
 
+@typing.final
 class Exact(SizeIntent):
     __module__ = "dimi"
 
     def __init__(self, pixels):
         self.pixels = pixels
+
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Exact)
 
     def _measure(self, relative_x: float, relative_y: float, default_axis=None):
         return self.pixels
@@ -113,6 +120,7 @@ class Exact(SizeIntent):
     __repr__ = __str__
 
 
+@typing.final
 class Hug(SizeIntent):
     __module__ = "dimi"
 
@@ -125,12 +133,16 @@ class Hug(SizeIntent):
             return hug
         return cls._default_singleton
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Hug)
+
     def __str__(self) -> str:
         return "Hug()"
 
     __repr__ = __str__
 
 
+@typing.final
 class Fill(SizeIntent):
     __module__ = "dimi"
 
@@ -148,12 +160,16 @@ class Fill(SizeIntent):
             return fill
         return cls._default_singleton
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Fill)
+
     def __str__(self) -> str:
         return f"Fill({self.weight})"
 
     __repr__ = __str__
 
 
+@typing.final
 class Percent(SizeIntent):
     __module__ = "dimi"
 
@@ -166,10 +182,13 @@ class Percent(SizeIntent):
             else:
                 # todo change this if you need to support dynamic scaling of sorts using strings
                 raise ValueError(
-                    "Failed to interpret string as percentage: percentage strings must be a valid number ending with '%'."
+                    f"Failed to interpret string '{percent}' as percentage. Percentage strings must be a valid number ending with '%'"
                 )
         self.weight = percent / 100
         self.relative_to: Axis | ChooseAxis = relative_to
+
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Percent)
 
     def _measure(
         self, relative_x, relative_y, default_axis: Axis | ChooseAxis | None = None
@@ -186,7 +205,7 @@ class Percent(SizeIntent):
             return self.weight * min(relative_x, relative_y)
         elif relative_to == ChooseAxis.MAX:
             return self.weight * max(relative_x, relative_y)
-        raise IllegalOperation("Invalid relative_to specifier.")
+        raise ValueError("Invalid relative_to specifier")
 
     def __str__(self) -> str:
         return f"Percent({self.weight * 100}% of {self.relative_to})"
@@ -194,6 +213,7 @@ class Percent(SizeIntent):
     __repr__ = __str__
 
 
+@typing.final
 class Span(SizeIntent):
     __module__ = "dimi"
 
@@ -201,12 +221,16 @@ class Span(SizeIntent):
         self.weight = weight
         self.count = count
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Span)
+
     def __str__(self) -> str:
         return f"Span({self.weight * 100}% between {self.count})"
 
     __repr__ = __str__
 
 
+@typing.final
 class Ratio(SizeIntent):
     __module__ = "dimi"
 
@@ -215,12 +239,16 @@ class Ratio(SizeIntent):
             ratio_or_width = ratio_or_width / height
         self.ratio = ratio_or_width
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Ratio)
+
     def __str__(self):
         return f"Ratio(width/height = {self.ratio})"
 
     __repr__ = __str__
 
 
+@typing.final
 class Directions(typing.NamedTuple):
     __module__ = "dimi"
 
@@ -229,7 +257,11 @@ class Directions(typing.NamedTuple):
     right: Measure = 0
     bottom: Measure = 0
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Directions)
 
+
+@typing.final
 class Corners(typing.NamedTuple):
     __module__ = "dimi"
 
@@ -238,17 +270,25 @@ class Corners(typing.NamedTuple):
     bottomleft: Measure = 0
     bottomright: Measure = 0
 
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Corners)
+
 
 type Size = SizeIntent | str | float
 type Measure = Exact | Percent | str | float
 type DirectionalMeasure = Measure | tuple[Measure, Measure] | Directions
+type CursorLike = int | pygame.Cursor
 
 
+@typing.final
 class Constraint(typing.NamedTuple):
     __module__ = "dimi"
 
     min: Measure | None = None
     max: Measure | None = None
+
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Constraint)
 
 
 class Absolute(typing.NamedTuple):
@@ -269,6 +309,7 @@ class Wrap(typing.NamedTuple):
     line_spacing: Measure = 3
 
 
+@typing.final
 class Font(typing.NamedTuple):
     name: str
     is_sysfont: bool = False
@@ -276,6 +317,9 @@ class Font(typing.NamedTuple):
     sysfont_italic: bool = False
 
     __module__ = "dimi"
+
+    def __init_subclass__(cls, **kwargs):
+        raise IllegalSubclassError(Font)
 
 
 class Transform(typing.NamedTuple):
@@ -308,6 +352,8 @@ B = 3
 
 ZERO_DIRECTIONS = (0, 0, 0, 0)
 ZERO_CORNERS = (0, 0, 0, 0)
+
+WIDGET_GLOBAL_STATE = "global"
 
 
 def get_directional_measure(measure, max_w, max_h, name):

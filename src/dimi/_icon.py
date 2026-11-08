@@ -13,12 +13,9 @@ import pygame
 from pygame._render import Renderer, Texture
 
 from dimi._dimi import get_current_context
+from dimi.error import IconFetchError
 
 DEFAULT_SVG_SIZE = 128
-
-
-# todo consider exporting to dimi.typehinting or dimi.error
-class IconFetchError(Exception): ...
 
 
 class FetchFailBehavior(enum.Enum):
@@ -202,7 +199,7 @@ def iconify_parse_args(
             style = settings["iconify_style"]
         else:
             style = DEFAULT_ICONIFY_STYLE
-    if len(style_overrides) > 0:
+    if style_overrides:
         style = style._replace(**style_overrides)
     return icon_set, style
 
@@ -222,7 +219,7 @@ def path_style_parse_args(
             style = settings[style_name]
         else:
             style = default_style
-    if len(style_overrides) > 0:
+    if style_overrides:
         style = style._replace(**style_overrides)
     return path, style
 
@@ -238,7 +235,7 @@ def style_parse_args(
             style = settings[style_name]
         else:
             style = default_style
-    if len(style_overrides) > 0:
+    if style_overrides:
         style = style._replace(**style_overrides)
     return style
 

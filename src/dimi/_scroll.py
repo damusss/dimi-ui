@@ -4,8 +4,9 @@ import typing
 import pygame
 
 from dimi._context import Context
-from dimi._dimi import _requires_context_error, using
+from dimi._dimi import get_current_context, register_widget
 from dimi._primitives import Axis
+from dimi.error import MissingActiveContexError, MissingElementForWidget
 
 # todo: middle click and drag for auto scrolling like browsers
 
@@ -35,7 +36,7 @@ class ScrolLStyleOverrides(typing.TypedDict, total=False):
     keep_scroll_percentage_on_resize: bool
 
 
-DEFAULT_SCROLL_STYLE = ScrollStyle()
+SCROLL_DEFAULT_STYLE = ScrollStyle()
 
 
 class ScrollState:
@@ -48,7 +49,7 @@ class ScrollState:
 
     @property
     def children_offset(self) -> tuple[float, float]:
-        return (-self._instance["scroll"].x, -self._instance["scroll"].y)
+        return -self._instance["scroll"].x, -self._instance["scroll"].y
 
     def scroll(self, x: float = 0, y: float = 0, apply_axis_constraint: bool = True):
         scroll_scroll(self._instance, x, y, apply_axis_constraint)
@@ -72,10 +73,11 @@ class ScrollDict(typing.TypedDict):
     absolute_rect: pygame.Rect
     scroll: pygame.Vector2
     container_axis: Axis
+    state: ScrollState
 
 
 def scroll_init(id_: int, style: ScrollStyle) -> ScrollDict:
-    return {
+    self = {
         "id": id_,
         "overflow": pygame.Vector2(),
         "style": style,
@@ -83,6 +85,8 @@ def scroll_init(id_: int, style: ScrollStyle) -> ScrollDict:
         "scroll": pygame.Vector2(),
         "container_axis": Axis.Y,
     }
+    self["state"] = ScrollState(self)
+    return self
 
 
 def scroll_scroll(self: ScrollDict, x, y, apply_axis_constraint=True):
@@ -111,6 +115,11 @@ def scroll_clamp(self: ScrollDict, apply_axis_constraint=True):
             offset.y = 0
         elif axis == ScrollAxis.Y:
             offset.x = 0
+
+
+def scroll_on_event(event: pygame.Event, context: Context):
+    for state in context.iter_widget_states("scroll"):
+        scroll_event(event, state)
 
 
 def scroll_event(event: pygame.Event, self: ScrollDict):
@@ -155,27 +164,28 @@ def scroll(
     style: ScrollStyle | None = None,
     **style_overrides: typing.Unpack[ScrolLStyleOverrides],
 ):
-    context = using._current_context
+    context = get_current_context()
     if context is None:
-        _requires_context_error()
-    container = context._element_stack[-1]
-    interaction = container.interaction()
+        raise MissingActiveContexError()
+    interaction = context.get_last_interaction()
+    if interaction is None:
+        raise MissingElementForWidget("scroll")
 
     if style is None:
-        style = DEFAULT_SCROLL_STYLE
-    if len(style_overrides) > 0:
+        style = SCROLL_DEFAULT_STYLE
+    if style_overrides:
         style = style._replace(**style_overrides)
 
-    id_ = context._id_stack[-1]
-    if id_ not in context._widget_memories["scroll"]:
-        context._widget_memories["scroll"][id_] = scroll_init(id_, style)
-    self: ScrollDict = context._widget_memories["scroll"][id_]
+    self: ScrollDict = context.get_widget_state(
+        "scroll", scroll_init, init_args=(style,)
+    )
 
+    container_style = interaction.style
     previous_overflow = self["overflow"]
     self["style"] = style
     self["overflow"] = pygame.Vector2(interaction.children_overflow)
     self["absolute_rect"] = interaction.absolute_rect
-    self["container_axis"] = container.style.axis
+    self["container_axis"] = container_style.axis
 
     if (
         self["style"].keep_scroll_percentage_on_resize
@@ -191,14 +201,14 @@ def scroll(
     scroll_clamp(self)
 
     if interaction.bounds_hovered:
-        ScrollState._bounds_hovered_id = id_
+        ScrollState._bounds_hovered_id = self["id"]
 
-    state = ScrollState(self)
+    state = self["state"]
     if style.automatic_children_offset:
-        container.style = container.style._replace(
+        interaction._node.style = container_style._replace(
             children_offset=state.children_offset
         )
     return state
 
 
-Context._widget_event_handler["scroll"] = scroll_event
+register_widget("scroll", on_event=scroll_on_event)

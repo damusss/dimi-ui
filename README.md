@@ -47,4 +47,7 @@ Every feature can be accessed through the following modules:
 - `dimi.widget`
 - `dimi.app`
 - `dimi.icon`
+
+
 - `dimi.typehinting`
+- `dimi.error`

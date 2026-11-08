@@ -15,18 +15,20 @@ from dimi._primitives import (
     ImageFit,
     L,
     NinePatch,
+    PointsOrigin,
     R,
     T,
     anchor_rect,
     get_directional_measure,
     measure_value,
 )
-from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
+from dimi._style import EllipseStyle, ImageStyle, LineStyle, RectStyle, TextStyle
 
 
 class Component(enum.StrEnum):
     RECT = "rect"
     ELLIPSE = "ellipse"
+    LINE = "line"
     TEXT = "text"
     IMAGE = "image"
 
@@ -151,6 +153,47 @@ def rect_parse_style(bounds: pygame.Rect, style: RectStyle):
         border_radius = (border_radius, border_radius, border_radius, border_radius)
 
     return padded_rect, int(border_width), border_radius
+
+
+def line_parse_style(
+    bounds: pygame.Rect, start_end: tuple[tuple, tuple], style: LineStyle
+) -> tuple[tuple[float, float], tuple[float, float], float]:
+    line_size = measure_value(style.size, bounds.w, bounds.h, ChooseAxis.MIN)
+
+    if style.padding == 0:
+        padded_rect = bounds
+    else:
+        padding = get_directional_measure(style.padding, bounds.w, bounds.h, "padding")
+        padded_rect = pygame.Rect(
+            bounds.x + padding[L],
+            bounds.y + padding[T],
+            bounds.w - padding[L] - padding[R],
+            bounds.h - padding[T] - padding[B],
+        )
+
+    if style.offset != (0, 0):
+        padded_rect = padded_rect.move(style.offset)
+
+    if style.points_origin == PointsOrigin.CENTER:
+        x_100, y_100 = padded_rect.w / 2, padded_rect.h / 2
+        origin_x, origin_y = x_100, y_100
+    elif style.points_origin == PointsOrigin.TOPLEFT:
+        x_100, y_100 = padded_rect.size
+        origin_x = origin_y = 0
+    else:
+        raise ValueError(f"Unrecognized points_origin value '{style.points_origin}'")
+
+    points = []
+    for point in start_end:
+        px = measure_value(point[0], x_100, y_100, Axis.X)
+        py = measure_value(point[1], x_100, y_100, Axis.Y)
+        points.append((padded_rect.x + origin_x + px, padded_rect.y + origin_y + py))
+
+    return (
+        points[0],
+        points[1],
+        line_size,
+    )
 
 
 def ellipse_parse_style(bounds: pygame.Rect, style: EllipseStyle):
@@ -291,4 +334,5 @@ DEFAULT_COMPONENT_STYLE_CLASSES = {
     Component.ELLIPSE: EllipseStyle,
     Component.TEXT: TextStyle,
     Component.IMAGE: ImageStyle,
+    Component.LINE: LineStyle,
 }

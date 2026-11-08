@@ -14,6 +14,7 @@ from dimi._interaction import Button, ButtonStatus, HoverStatus, Interaction
 from dimi._node import Node
 from dimi._primitives import Exact, RenderOrder
 from dimi._style import Style
+from dimi.error import WidgetRegistrationError
 
 
 class ContextOrigin:
@@ -43,7 +44,13 @@ class ContextOrigin:
 
 class Context:
     __module__ = "dimi"
-    _widget_event_handler = {}
+    _registered_widgets: typing.ClassVar[set[str]] = set()
+    _registered_widget_on_event: typing.ClassVar[
+        dict[str, typing.Callable[[pygame.Event, Context], None]]
+    ] = {}
+    _registered_widget_on_start: typing.ClassVar[
+        dict[str, typing.Callable[[Context], None]]
+    ] = {}
 
     def __init__(
         self,
@@ -65,10 +72,7 @@ class Context:
         self._element_stack: list[Node] = []
 
         self._node_memory: dict[int, Node] = {}
-        self._widget_memories: dict[str, dict[int, dict]] = {
-            "entry_line": {},
-            "scroll": {},
-        }
+        self._widget_memories: dict[str, dict[typing.Hashable, dict | typing.Any]] = {}
 
         self._node: Node | None = None
         self._dummy_node: Node = Node(self, Style(), 0, (None, {}))
@@ -89,16 +93,86 @@ class Context:
             canvas_viewport.size,
         )
 
-    def process_events(self, events: typing.Iterable[pygame.Event]):
-        for event in events:
-            self.process_event(event)
-
     def process_event(self, event: pygame.Event):
-        for kind, memory in self._widget_memories.items():
-            event_handler = Context._widget_event_handler.get(kind, None)
-            if event_handler is not None:
-                for instance in memory.values():
-                    event_handler(event, instance)
+        for event_handler in Context._registered_widget_on_event.values():
+            event_handler(event, self)
+
+    def get_interaction(self, element_id: int) -> Interaction | None:
+        if element_id in self._node_memory:
+            self._node = self._node_memory[element_id]
+            interaction = Interaction(self, self._node)
+            interaction._is_element = False
+            return interaction
+        return None
+
+    def get_last_id(self) -> int:
+        return self._id_stack[-1]
+
+    def get_last_interaction(self) -> Interaction | None:
+        if not self._element_stack:
+            return None
+        interaction_ref = self._element_stack[-1].interaction
+        if interaction_ref is None:
+            return None
+        return interaction_ref()
+
+    def get_last_parent_interaction(self) -> Interaction | None:
+        if not self._parent_stack:
+            return None
+        interaction_ref = self._parent_stack[-1].interaction
+        if interaction_ref is None:
+            return None
+        return interaction_ref()
+
+    def get_widget_state[**FactoryParamSpec](
+        self,
+        widget: str,
+        init_factory: typing.Callable[
+            typing.Concatenate[typing.Hashable, FactoryParamSpec], typing.Any
+        ],
+        id_: typing.Hashable | None = None,
+        *,
+        init_args: FactoryParamSpec.args = (),
+        init_kwargs: FactoryParamSpec.kwargs | None = None,
+    ) -> typing.Any:
+        if widget not in self._widget_memories:
+            if widget not in self._registered_widgets:
+                raise WidgetRegistrationError(
+                    f"Cannot get/init the state of an unregistered widget. Use dimi.register_widget('{widget}') to register it"
+                )
+            self._widget_memories[widget] = {}
+        memory = self._widget_memories[widget]
+        if id_ is None:
+            id_ = self._id_stack[-1]
+        if id_ not in memory:
+            if init_kwargs is None:
+                state = init_factory(id_, *init_args)
+            else:
+                state = init_factory(id_, *init_args, **init_kwargs)
+            memory[id_] = state
+        return memory[id_]
+
+    def discard_widget_state(self, widget: str, id_: typing.Hashable) -> bool:
+        if widget not in self._widget_memories:
+            if widget not in self._registered_widgets:
+                raise WidgetRegistrationError(
+                    f"Cannot discard the state of an unregistered widget. Use dimi.register_widget('{widget}') to register it"
+                )
+            return False
+        memory = self._widget_memories[widget]
+        if id_ in memory:
+            memory.pop(id_)
+            return True
+        return False
+
+    def iter_widget_states(self, widget: str) -> typing.Generator[dict | typing.Any]:
+        if widget not in self._widget_memories:
+            if widget not in self._registered_widgets:
+                raise WidgetRegistrationError(
+                    f"Cannot iterate the states of an unregistered widget. Use dimi.register_widget('{widget}') to register it"
+                )
+            self._widget_memories[widget] = {}
+        yield from self._widget_memories[widget].values()
 
     def _start(self, style=None):
         viewport = self.viewport
@@ -108,6 +182,8 @@ class Context:
         self._style_stacks = {None: [Style()]}
         self._id_stack = [hash("root")]
         self.canvas._using_start()
+        for start_callback in Context._registered_widget_on_start.values():
+            start_callback(self)
         self._begin(
             style, {"width": Exact(viewport.width), "height": Exact(viewport.height)}
         )
@@ -122,7 +198,7 @@ class Context:
             composed_style = style
         else:
             composed_style = self._style_stacks[component][-1]
-        if len(style_overrides) > 0:
+        if style_overrides:
             composed_style = composed_style._fast_replace(style_overrides)
         return composed_style
 
@@ -138,7 +214,7 @@ class Context:
                 composed_style is mem_style or composed_style == mem_style
             ) and style_overrides == mem_overrides:
                 return memory.style, style_args
-        if len(style_overrides) > 0:
+        if style_overrides:
             composed_style = composed_style._fast_replace(style_overrides)
         return composed_style, style_args
 
@@ -151,7 +227,7 @@ class Context:
         node = Node(self, style, id_, style_args)
 
         self._node = node
-        if len(self._parent_stack) <= 0:
+        if not self._parent_stack:
             return node, memory
 
         parent = self._parent_stack[-1]
@@ -194,7 +270,7 @@ class Context:
         render_order = getattr(style, "render_order", RenderOrder.DEFAULT)
         if (
             (render_order == RenderOrder.ABOVE_CHILDREN)
-            or (len(node.relative_children) > 0 or len(node.absolute_children) > 0)
+            or (node.relative_children or node.absolute_children)
         ) and render_order != RenderOrder.BELOW_CHILDREN:
             node.components_above.append(comp)
         else:
@@ -227,7 +303,6 @@ class Context:
                 if node.style.blocking:
                     self._hovered_node = node
 
-        # todo support custom components and change how the canvas method is checked
         if node.components_below:
             comps = node.components_below
             if len(comps) > 1 and any(c[2].z != 0 for c in comps):

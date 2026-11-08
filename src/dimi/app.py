@@ -1,19 +1,3 @@
-from dimi._app import (
-    App,
-    AppStyle,
-    Cursors,
-    EmulatedApp,
-    EmulatedAppStyle,
-    EmulatedWindowControls,
-    EmulatedWindowControlsStyle,
-    HitTestResult,
-    IconLayout,
-    TitlebarButtonLayout,
-    TitlebarButtonLayouts,
-    TitlebarButtonStyle,
-    TitlebarButtonStyles,
-)
-
 __all__ = (
     "App",
     "AppStyle",
@@ -28,4 +12,20 @@ __all__ = (
     "TitlebarButtonLayouts",
     "TitlebarButtonStyle",
     "TitlebarButtonStyles",
+)
+
+from dimi._app import (
+    App,
+    AppStyle,
+    Cursors,
+    EmulatedApp,
+    EmulatedAppStyle,
+    EmulatedWindowControls,
+    EmulatedWindowControlsStyle,
+    HitTestResult,
+    IconLayout,
+    TitlebarButtonLayout,
+    TitlebarButtonLayouts,
+    TitlebarButtonStyle,
+    TitlebarButtonStyles,
 )

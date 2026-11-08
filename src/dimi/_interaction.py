@@ -4,19 +4,21 @@ import typing
 import pygame
 
 from dimi._components import Component
-from dimi._error import IllegalOperation
-from dimi._primitives import Directions
+from dimi._primitives import Directions, Measure
 from dimi._style import (
     EllipseStyle,
     EllipseStyleOverrides,
     ImageStyle,
     ImageStyleOverrides,
+    LineStyle,
+    LineStyleOverrides,
     RectStyle,
     RectStyleOverrides,
     Style,
     TextStyle,
     TextStyleOverrides,
 )
+from dimi.error import IllegalComponentShortcutError
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
@@ -48,9 +50,6 @@ class HoverStatus(enum.IntEnum):
     BOUNDS = enum.auto()
 
 
-DEFAULT_STYLE = Style()
-
-
 class ComputedLayout(typing.NamedTuple):
     padding: Directions
     margin: Directions
@@ -59,6 +58,7 @@ class ComputedLayout(typing.NamedTuple):
     __module__ = "dimi.typehinting"
 
 
+DEFAULT_STYLE = Style()
 HOVERED_STATUSES = (HoverStatus.HOVERED, HoverStatus.JUST_HOVERED)
 
 
@@ -72,9 +72,10 @@ class Interaction:
         self.context: Context = context
 
         self._data_node: Node | None = memory
-        inherit_node: Node = memory
         if memory is None:
-            inherit_node = self.context._dummy_node
+            inherit_node: Node = self.context._dummy_node
+        else:
+            inherit_node: Node = memory
 
         self.hover_status: HoverStatus = inherit_node.hover_status
         self.button: Button = inherit_node.active_button
@@ -140,9 +141,7 @@ class Interaction:
 
     @property
     def style(self) -> Style:
-        if self._data_node is None:
-            return DEFAULT_STYLE
-        return self._data_node.style
+        return self._node.style
 
     @property
     def children_overflow(self) -> tuple[float, float]:
@@ -177,9 +176,7 @@ class Interaction:
 
     def _validate_shortcut(self):
         if self._is_parent or self.context._element_stack[-1] is self._node:
-            raise IllegalOperation(
-                "Component shortcuts are intended to be used for childless elements without context managers."
-            )
+            raise IllegalComponentShortcutError()
 
     def rect(
         self,
@@ -199,6 +196,17 @@ class Interaction:
         self._validate_shortcut()
         with self:
             self.context._component(Component.ELLIPSE, None, style, style_overrides)
+        return self
+
+    def line(
+        self,
+        start_end: tuple[tuple[Measure, Measure], tuple[Measure, Measure]],
+        style: LineStyle | None = None,
+        **style_overrides: typing.Unpack[LineStyleOverrides],
+    ):
+        self._validate_shortcut()
+        with self:
+            self.context._component(Component.LINE, start_end, style, style_overrides)
         return self
 
     def text(

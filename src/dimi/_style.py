@@ -10,7 +10,6 @@ from dimi._primitives import (
     Constraint,
     Corners,
     DirectionalMeasure,
-    Fill,
     Font,
     FontAlign,
     FontDirection,
@@ -18,6 +17,7 @@ from dimi._primitives import (
     ImageRepeat,
     Measure,
     NinePatch,
+    PointsOrigin,
     RenderOrder,
     ScaleQuality,
     Size,
@@ -222,14 +222,58 @@ class EllipseStyleOverrides(typing.TypedDict, total=False):
     z: float
 
 
-# todo support rich text
+class LineStyle(typing.NamedTuple):
+    __module__ = "dimi"
+
+    padding: DirectionalMeasure = 0
+    offset: pygame.typing.Point = (0, 0)
+
+    size: Measure = 1
+    points_origin: PointsOrigin = PointsOrigin.CENTER
+
+    color: pygame.typing.ColorLike = (0, 0, 0, 0)
+    antialias: bool = True
+
+    render_order: RenderOrder = RenderOrder.DEFAULT
+    z: float = 0
+
+    def _fast_replace(self, kwargs) -> LineStyle:
+        if not kwargs:
+            return self
+        g = kwargs.get
+        return LineStyle(
+            g("padding", self[0]),
+            g("offset", self[1]),
+            g("size", self[2]),
+            g("points_origin", self[3]),
+            g("color", self[4]),
+            g("antialias", self[5]),
+            g("render_order", self[6]),
+            g("z", self[7]),
+        )
+
+
+class LineStyleOverrides(typing.TypedDict, total=False):
+    __module__ = "dimi.typehinting"
+
+    padding: DirectionalMeasure
+    offset: pygame.typing.Point
+
+    size: Measure
+    points_origin: PointsOrigin
+
+    color: pygame.typing.ColorLike
+    antialias: bool
+
+    render_order: RenderOrder
+    z: float
 
 
 class TextStyle(typing.NamedTuple):
     __module__ = "dimi"
 
     font: pygame.Font | Font | None = None
-    size: Measure | Fill | None = None
+    size: Measure | None = None
 
     padding: DirectionalMeasure = (5, 3)
     anchor: Anchor = Anchor.CENTER

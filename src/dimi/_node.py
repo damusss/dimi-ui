@@ -5,7 +5,6 @@ import weakref
 import pygame
 
 from dimi._components import Component
-from dimi._error import IllegalOperation
 from dimi._interaction import ButtonStatus, HoverStatus
 from dimi._primitives import (
     ZERO_DIRECTIONS,
@@ -26,6 +25,13 @@ from dimi._primitives import (
     measure_value,
 )
 from dimi._style import Style
+from dimi.error import (
+    IllegalAbsoluteAnchorCombinationError,
+    IllegalHugCombinationError,
+    IllegalLayoutError,
+    IllegalRatioCombinationError,
+    TextLayoutError,
+)
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
@@ -156,8 +162,8 @@ class Node:
                 else:
                     wrap_width = 0
                 height = self.measured_height_no_margins
-                if isinstance(style.size, Percent | Span) and height_is_hug:
-                    raise IllegalOperation(
+                if height_is_hug and type(style.size) in (Percent, Span):
+                    raise TextLayoutError(
                         "Text size can't be a percentage or a span of the height if the element's height is Hug()"
                     )
                 cache_key = hash((hash(data), hash(style), wrap_width, height))
@@ -317,18 +323,14 @@ class Node:
                     tentative_w = width._measure(margined_max_w, margined_max_h, Axis.X)
                     set_w = True
                     if parent_style is not None and type(parent_style.width) is Hug:
-                        raise IllegalOperation(
-                            "Child with Percent width cannot be measured inside a parent with Hug width"
-                        )
+                        raise IllegalHugCombinationError("Percent", "width")
                 elif width_type is Span:
                     tentative_w = (
                         margined_max_w - (parent_spacing * (width.count - 1))
                     ) * width.weight
                     set_w = True
                     if parent_style is not None and type(parent_style.width) is Hug:
-                        raise IllegalOperation(
-                            "Child with Span width cannot be measured inside a parent with Hug width"
-                        )
+                        raise IllegalHugCombinationError("Span", "width")
                 elif width_type is Ratio:
                     w_is_ratio = True
                 elif width_type is Fill:
@@ -336,9 +338,7 @@ class Node:
                         tentative_w = width.weight * margined_max_w
                         set_w = True
                     if parent_style is not None and type(parent_style.width) is Hug:
-                        raise IllegalOperation(
-                            "Child with Fill width cannot be measured inside a parent with Hug width"
-                        )
+                        raise IllegalHugCombinationError("Fill", "width")
 
             height_type = type(self.style.height)
             if height_type in (int, float):
@@ -357,23 +357,17 @@ class Node:
                     )
                     set_h = True
                     if parent_style is not None and type(parent_style.height) is Hug:
-                        raise IllegalOperation(
-                            "Child with Percent height cannot be measured inside a parent with Hug height"
-                        )
+                        raise IllegalHugCombinationError("Percent", "height")
                 elif height_type is Span:
                     tentative_h = (
                         margined_max_h - (parent_spacing * (height.count - 1))
                     ) * height.weight
                     set_h = True
                     if parent_style is not None and type(parent_style.height) is Hug:
-                        raise IllegalOperation(
-                            "Child with Span height cannot be measured inside a parent with Hug height"
-                        )
+                        raise IllegalHugCombinationError("Span", "height")
                 elif height_type is Ratio:
                     if not set_w:
-                        raise IllegalOperation(
-                            "Element with Ratio height needs a well defined width of either Exact, Percent, or Span"
-                        )
+                        raise IllegalRatioCombinationError("height", "width")
                     tentative_h = tentative_w / height.ratio
                     set_h = True
                 elif height_type is Fill:
@@ -381,15 +375,11 @@ class Node:
                         tentative_h = height.weight * margined_max_h
                         set_h = True
                     if parent_style is not None and type(parent_style.height) is Hug:
-                        raise IllegalOperation(
-                            "Child with Fill height cannot be measured inside a parent with Hug height"
-                        )
+                        raise IllegalHugCombinationError("Fill", "height")
 
                 if w_is_ratio:
                     if not set_h:
-                        raise IllegalOperation(
-                            "Element with Ratio width needs a well defined height of either Exact, Percent, or Span"
-                        )
+                        raise IllegalRatioCombinationError("width", "height")
                     tentative_w = tentative_h * width.ratio
                     set_w = True
 
@@ -535,36 +525,26 @@ class Node:
                 and child.absolute_anchors[R] is not None
                 and (not cw_is_fill or child.style.width.weight != 1)
             ):
-                raise IllegalOperation(
-                    "An absolutely positioned element can't fulfill both lateral anchor requests simultaneously if the element's width isn't Fill(1)."
-                )
+                raise IllegalAbsoluteAnchorCombinationError(True, "width")
             if (
                 child.absolute_anchors[L] is not None
                 or child.absolute_anchors[R] is not None
             ) and child.absolute_anchors[CX] is not None:
-                raise IllegalOperation(
-                    "An absolutely positioned element can't fulfill both the central anchor request and either of the later anchors simultaneously."
-                )
+                raise IllegalAbsoluteAnchorCombinationError(False, "")
             if (
                 child.absolute_anchors[T] is not None
                 and child.absolute_anchors[B] is not None
                 and (not ch_is_fill or child.style.height.weight != 1)
             ):
-                raise IllegalOperation(
-                    "An absolutely positioned element can't fulfill both lateral anchor requests simultaneously if the element's height isn't Fill(1)."
-                )
+                raise IllegalAbsoluteAnchorCombinationError(True, "height")
             if (
                 child.absolute_anchors[T] is not None
                 or child.absolute_anchors[B] is not None
             ) and child.absolute_anchors[CY] is not None:
-                raise IllegalOperation(
-                    "An absolutely positioned element can't fulfill both the central anchor request and either of the later anchors simultaneously."
-                )
+                raise IllegalAbsoluteAnchorCombinationError(False, "")
             child.measure(
                 0, anchored_max_w, 0, anchored_max_h, None, None, self.spacing_px
             )
-
-        # todo implement wrap
 
     def confirm_measure(
         self,
@@ -699,8 +679,8 @@ class Node:
                 used_w += child.measured_width
                 used_h += child.measured_height - prev_h
                 if type(self.style.height) is Hug and child.measured_height != prev_h:
-                    raise IllegalOperation(
-                        "Due to layout complexity it is illegal to create a parent with height Hug() containing a child with width Fill() and height Hug() containing intrinsic text that resizes based on wrap width."
+                    raise IllegalLayoutError(
+                        "Due to layout complexity it is illegal to create a parent with height Hug() containing a child with width Fill() and height Hug() containing intrinsic text that resizes based on wrap width"
                     )
             else:  # Axis.Y
                 child.confirm_measure(
@@ -811,5 +791,3 @@ class Node:
             )
 
         self.context._node_memory[self.id] = self
-
-        # todo implement wrap

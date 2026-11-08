@@ -5,5 +5,5 @@ dist/
 *.egg-info/
 .idea/
 .env
-test.py
+test*.py
 todo.md

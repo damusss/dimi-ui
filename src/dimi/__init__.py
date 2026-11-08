@@ -1,4 +1,4 @@
-__all__ = [
+__all__ = (
     "Absolute",
     "Align",
     "Anchor",
@@ -19,7 +19,6 @@ __all__ = [
     "FontDirection",
     "HoverStatus",
     "Hug",
-    "IllegalOperation",
     "ImageFit",
     "ImageRepeat",
     "NinePatch",
@@ -40,22 +39,24 @@ __all__ = [
     "element",
     "ellipse",
     "end",
+    "error",
     "get_current_context",
-    "get_interaction",
     "icon",
     "image",
+    "line",
     "push_id",
     "push_style",
     "rect",
+    "register_widget",
     "replace_nested_style",
     "text",
     "typehinting",
     "using",
     "when",
     "widget",
-]
+)
 
-from . import app, icon, typehinting, widget  # todo: animation module
+from . import app, error, icon, typehinting, widget
 from ._canvas import RendererCanvas, SurfaceCanvas
 from ._context import Context, ContextOrigin
 from ._dimi import (
@@ -64,17 +65,17 @@ from ._dimi import (
     ellipse,
     end,
     get_current_context,
-    get_interaction,
     image,
+    line,
     push_id,
     push_style,
     rect,
+    register_widget,
     replace_nested_style,
     text,
     using,
     when,
 )
-from ._error import IllegalOperation
 from ._interaction import (
     Button,
     ButtonStatus,

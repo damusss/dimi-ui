@@ -10,9 +10,9 @@ from dimi._components import (
     Component,
     ellipse_parse_style,
     image_parse_style,
+    line_parse_style,
     rect_parse_style,
 )
-from dimi._error import IllegalOperation
 from dimi._primitives import (
     BL,
     BR,
@@ -30,7 +30,8 @@ from dimi._primitives import (
     get_directional_measure,
     measure_value,
 )
-from dimi._style import EllipseStyle, ImageStyle, RectStyle, TextStyle
+from dimi._style import EllipseStyle, ImageStyle, LineStyle, RectStyle, TextStyle
+from dimi.error import TextRenderingError
 
 
 class Canvas(ABC):
@@ -66,10 +67,10 @@ class Canvas(ABC):
     ):
         padding = get_directional_measure(style.padding, wrap_width, height, "padding")
         available_h = height - padding[T] - padding[B]
-        if style.font is None or isinstance(style.font, Font):
+        if style.font is None or type(style.font) is Font:
             font: pygame.Font = self._get_font(style.font)
             if style.size is None:
-                raise IllegalOperation(
+                raise TextRenderingError(
                     "When a manual pygame.Font isn't specified the size style must not be None"
                 )
         else:
@@ -97,7 +98,9 @@ class Canvas(ABC):
             font.align = int(style.align)
         font.set_direction(int(style.direction))
         if style.line_skip is not None:
-            font.set_linesize(measure_value(style.line_skip, wrap_width, size, Axis.Y))
+            font.set_linesize(
+                int(measure_value(style.line_skip, wrap_width, size, Axis.Y))
+            )
         if style.italic != font.italic:
             font.italic = style.italic
         if style.bold != font.bold:
@@ -177,7 +180,7 @@ class Canvas(ABC):
             if outline_surface is not None:
                 surface = outline_surface
             else:
-                raise IllegalOperation(
+                raise TextRenderingError(
                     "The text color can only be None if the outline width is not zero."
                 )
 
@@ -231,6 +234,7 @@ class RendererCanvas(Canvas):
             Component.ELLIPSE: self._render_ellipse,
             Component.TEXT: self._render_text,
             Component.IMAGE: self._render_image,
+            Component.LINE: self._render_line,
         }
         self._corners_mask_blend_mode = self.renderer.compose_custom_blend_mode(
             (
@@ -256,6 +260,12 @@ class RendererCanvas(Canvas):
             tuple[int, int, tuple], tuple[_render.Texture, list[_render.Texture]]
         ] = {}
         self._pinged_radius_image_layers: set[tuple[int, int, tuple]] = set()
+        self._cached_lines: dict[
+            tuple[float, float, float, float, float, str, bool], _render.Texture
+        ] = {}
+        self._pinged_lines: set[tuple[float, float, float, float, float, str, bool]] = (
+            set()
+        )
 
         self._texture_1pixels = _render.Texture(self.renderer, (1, 1), 32)
         self._texture_1pixels.blend_mode = pygame.BLENDMODE_BLEND
@@ -283,6 +293,7 @@ class RendererCanvas(Canvas):
         self._pinged_ellipse_corners = set(self._cached_ellipse_corners.keys())
         self._pinged_text_cache_keys = set(self._cached_text.keys())
         self._pinged_radius_image_layers = set(self._cached_radius_image_layers.keys())
+        self._pinged_lines = set(self._cached_lines.keys())
 
     def _render_end(self):
         for key in self._pinged_circle_corners:
@@ -293,6 +304,8 @@ class RendererCanvas(Canvas):
             self._cached_text.pop(key)
         for key in self._pinged_radius_image_layers:
             self._cached_radius_image_layers.pop(key)
+        for key in self._pinged_lines:
+            self._cached_lines.pop(key)
 
     def _get_image_1pixels(self):
         return self._texture_1pixels
@@ -1009,6 +1022,60 @@ class RendererCanvas(Canvas):
                     )
                 )
 
+    def _render_line(
+        self, bounds: pygame.Rect, start_end: tuple[tuple, tuple], style: LineStyle
+    ):
+        point_a, point_b, line_size = line_parse_style(bounds, start_end, style)
+        if line_size <= 0:
+            return
+        self.renderer.draw_color = style.color
+        if style.antialias or line_size != 1:
+            half_x = half_y = int(line_size // 2)
+            color = pygame.Color(style.color).hex
+            if point_a[0] > point_b[0]:
+                point_a, point_b = point_b, point_a
+            dabx = point_b[0] - point_a[0]
+            daby = point_b[1] - point_a[1]
+            if dabx >= daby:
+                half_x = 0
+            elif daby > dabx:
+                half_y = 0
+            left = min(point_a[0], point_b[0]) - half_x
+            top = min(point_a[1], point_b[1]) - half_y
+            antialias = style.antialias
+            cache_key = (half_x, half_y, line_size, dabx, daby, color, antialias)
+            if cache_key not in self._cached_lines:
+                surf = pygame.Surface(
+                    (abs(dabx) + half_x * 2, abs(daby) + half_y * 2), pygame.SRCALPHA
+                )
+                function = pygame.draw.aaline if antialias else pygame.draw.line
+                function(
+                    surf,
+                    color,
+                    (point_a[0] - left, point_a[1] - top),
+                    (point_b[0] - left, point_b[1] - top),
+                    int(line_size),
+                )
+                tex = _render.Texture(
+                    self.renderer, surf.size, 32, scale_quality=1 if antialias else 0
+                )
+                tex.update(surf)
+                tex.blend_mode = pygame.BLENDMODE_BLEND
+                self._cached_lines[cache_key] = tex
+            self._pinged_lines.discard(cache_key)
+            tex = self._cached_lines[cache_key]
+            tex.draw(
+                None,
+                (
+                    left,
+                    top,
+                    tex.width,
+                    tex.height,
+                ),
+            )
+        else:
+            self.renderer.draw_line(point_a, point_b)
+
 
 class SurfaceCanvas(Canvas):
     __module__ = "dimi"
@@ -1020,6 +1087,8 @@ class SurfaceCanvas(Canvas):
             Component.RECT: self._render_rect,
             Component.ELLIPSE: self._render_ellipse,
             Component.TEXT: self._render_text,
+            Component.IMAGE: lambda _1, _2, _3, _4: ...,  # todo: implement
+            Component.LINE: self._render_line,
         }
         self._cached_text: dict[int, tuple[pygame.Surface, pygame.Rect, tuple]] = {}
         self._pinged_text_cache_keys: set[int] = set()
@@ -1249,4 +1318,11 @@ class SurfaceCanvas(Canvas):
                 ),
             )
 
-    # todo: support image component
+    def _render_line(
+        self, bounds: pygame.Rect, start_end: tuple[tuple, tuple], style: LineStyle
+    ):
+        point_a, point_b, line_size = line_parse_style(bounds, start_end, style)
+        if line_size <= 0:
+            return
+        function = pygame.draw.aaline if style.antialias else pygame.draw.line
+        function(self.surface, style.color, point_a, point_b, int(line_size))

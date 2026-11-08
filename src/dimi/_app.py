@@ -5,8 +5,8 @@ import typing
 
 import pygame
 
+from dimi._cursor import get_cursor
 from dimi._dimi import begin, element, image, push_id, rect, text, using, when
-from dimi._error import IllegalOperation
 from dimi._icon import PackedIcon, svg
 from dimi._interaction import Interaction
 from dimi._primitives import (
@@ -14,12 +14,14 @@ from dimi._primitives import (
     Align,
     Anchor,
     Axis,
+    CursorLike,
     Directions,
     Fill,
     Font,
     FontAlign,
 )
 from dimi._style import ImageStyle, RectStyle, Style, TextStyle
+from dimi.error import IllegalOperationError
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
@@ -29,20 +31,28 @@ class AppStyle(typing.NamedTuple):
     __module__ = "dimi.app"
 
     clear_color: pygame.typing.ColorLike | None = "black"
-    target_framerate: float = 144
+    primary_window: bool = True
+    target_framerate: float | None = 144
     using_style: Style | None = None
     tick_busy_loop: bool = False
     dt_clamp: tuple[float, float] | None = None
+    on_event: typing.Callable[[pygame.Event], None] | None = None
+    on_close: typing.Callable[[], bool | None] | None = None
+    on_ui: typing.Callable[[], None] | None = None
 
 
 class AppStyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
 
     clear_color: pygame.typing.ColorLike | None
-    target_framerate: float
+    primary_window: bool
+    target_framerate: float | None
     using_style: Style | None
     tick_busy_loop: bool
     dt_clamp: tuple[float, float] | None
+    on_event: typing.Callable[[pygame.Event], None] | None
+    on_close: typing.Callable[[], bool | None] | None
+    on_ui: typing.Callable[[], None] | None
 
 
 class IconLayout(typing.NamedTuple):
@@ -105,7 +115,8 @@ CLOSE_SVG = """
 class EmulatedAppStyle(typing.NamedTuple):
     __module__ = "dimi.app"
 
-    target_framerate: float = 144
+    primary_window: bool = True
+    target_framerate: float | None = 144
     using_style: Style | None = Style(padding=1, spacing=1)
     maximized_using_style: Style | None = Style(padding=0, spacing=0)
     tick_busy_loop: bool = False
@@ -191,11 +202,16 @@ class EmulatedAppStyle(typing.NamedTuple):
         ),
     )
 
+    on_event: typing.Callable[[pygame.Event], None] | None = None
+    on_close: typing.Callable[[], bool | None] | None = None
+    on_ui: typing.Callable[[Interaction], CursorLike | None] | None = None
+
 
 class EmulatedAppStyleOverrides(typing.TypedDict, total=False):
     __module__ = "dimi.typehinting"
 
-    target_framerate: float
+    primary_window: bool
+    target_framerate: float | None
     using_style: Style | None
     maximized_using_style: Style | None
     tick_busy_loop: bool
@@ -221,6 +237,10 @@ class EmulatedAppStyleOverrides(typing.TypedDict, total=False):
     button_styles: TitlebarButtonStyles
     unfocused_button_styles: TitlebarButtonStyles
 
+    on_event: typing.Callable[[pygame.Event], None] | None
+    on_close: typing.Callable[[], bool | None] | None
+    on_ui: typing.Callable[[Interaction], CursorLike | None] | None
+
 
 class TitlebarButtonLayout(typing.NamedTuple):
     __module__ = "dimi.app"
@@ -242,6 +262,7 @@ class TitlebarButtonLayouts(typing.NamedTuple):
 
 class HitTestResult(enum.Enum):
     DEFAULT = enum.auto()
+    OFF_BOUNDS = enum.auto()
     NORMAL = enum.auto()
     DRAG = enum.auto()
     RESIZE_TOPLEFT = enum.auto()
@@ -359,7 +380,8 @@ class EmulatedWindowControls:
         self.window = window
         if style is None:
             style = EmulatedWindowControlsStyle()
-        style = style._replace(**style_overrides)
+        if style_overrides:
+            style = style._replace(**style_overrides)
         self.style: EmulatedWindowControlsStyle = style
         usable = self.style.display_usable_bounds  # obsolete in pygame-ce 3
         if usable is None:
@@ -434,7 +456,7 @@ class EmulatedWindowControls:
         if event.type == pygame.WINDOWMINIMIZED and event.window == self.window:
             self._minimized = True
         elif event.type == pygame.WINDOWMAXIMIZED and event.window == self.window:
-            raise IllegalOperation(
+            raise IllegalOperationError(
                 "When using EmulatedWindowControls, maximization is emulated. It is therefore forbidden to use Window.maximize directly to avoid undefined behavior"
             )
         elif event.type == pygame.WINDOWRESTORED and event.window == self.window:
@@ -456,7 +478,7 @@ class EmulatedWindowControls:
 
     def update(self):
         if self._minimized:
-            return HitTestResult.NORMAL
+            return HitTestResult.OFF_BOUNDS
 
         mouse = pygame.mouse.get_pos(True)
         position = self.window.position
@@ -474,24 +496,26 @@ class EmulatedWindowControls:
             self._update_just_pressed(mouse, rel_mouse)
         if just_released:
             self._update_just_released(rel_mouse)
-        if self._active_action != HitTestResult.NORMAL:
+        if self._active_action not in (HitTestResult.NORMAL, HitTestResult.OFF_BOUNDS):
             self._update_action(mouse)
             return self._active_action
         else:
             if not self.window.focused:
-                return HitTestResult.NORMAL
+                return HitTestResult.OFF_BOUNDS
             return self._hit_test(rel_mouse)
 
-    def apply_cursor(self, action: HitTestResult, cursor=None):
+    def get_cursor(
+        self, action: HitTestResult, ui_cursor: CursorLike | None = None
+    ) -> CursorLike | None:
         to_apply = None
         cursors = self.style.cursors
         if action == HitTestResult.NORMAL:
-            if cursor is not None:
-                to_apply = cursor
+            if ui_cursor is not None:
+                to_apply = ui_cursor
             else:
                 to_apply = cursors.normal
-        elif action == HitTestResult.DEFAULT:
-            to_apply = cursor
+        elif action == HitTestResult.OFF_BOUNDS or action == HitTestResult.DEFAULT:
+            to_apply = ui_cursor
         else:
             to_apply = {
                 HitTestResult.DRAG: cursors.drag,
@@ -507,8 +531,12 @@ class EmulatedWindowControls:
                 HitTestResult.MAXIMIZE_BUTTON: cursors.buttons,
                 HitTestResult.CLOSE_BUTTON: cursors.buttons,
             }[action]
-        if to_apply is not None:
-            pygame.mouse.set_cursor(to_apply)
+        return to_apply
+
+    def apply_cursor(self, action: HitTestResult, ui_cursor=None):
+        cursor = self.get_cursor(action, ui_cursor)
+        if cursor is not None:
+            pygame.mouse.set_cursor(cursor)
 
     def _update_just_pressed(self, mouse, rel_mouse):
         if not self.window.focused:
@@ -530,6 +558,7 @@ class EmulatedWindowControls:
         hit_test = self._hit_test(rel_mouse)
         self._hover_action_just_pressed = hit_test
         if hit_test not in (
+            HitTestResult.OFF_BOUNDS,
             HitTestResult.NORMAL,
             HitTestResult.MINIMIZE_BUTTON,
             HitTestResult.MAXIMIZE_BUTTON,
@@ -772,6 +801,9 @@ class EmulatedWindowControls:
             return HitTestResult.NORMAL
 
         size = self.window.size
+        if point[0] > size[0] or point[1] > size[1]:
+            return HitTestResult.OFF_BOUNDS
+
         hit_result = HitTestResult.NORMAL
         titlebar = self.style.titlebar_height
         layouts = self.style.button_layouts
@@ -928,15 +960,15 @@ class EmulatedWindowControls:
 
     @property
     def cached_hitboxes(self) -> CachedHitboxes:
-        if len(self._titlebar_hitbox) > 0:
+        if self._titlebar_hitbox:
             titlebar_hitbox = next(iter(self._titlebar_hitbox.values()))
         else:
             titlebar_hitbox = None
-        if len(self._resize_hitbox) > 0:
+        if self._resize_hitbox:
             resize_hitboxes = next(iter(self._resize_hitbox.values()))
         else:
             resize_hitboxes = None
-        if len(self._buttons_hitbox) > 0:
+        if self._buttons_hitbox:
             button_hitboxes = tuple(reversed(next(iter(self._buttons_hitbox.values()))))
         else:
             button_hitboxes = None
@@ -960,26 +992,40 @@ class EmulatedApp:
 
         if style is None:
             style = EmulatedAppStyle()
-        style = style._replace(**style_overrides)
+        if style_overrides:
+            style = style._replace(**style_overrides)
         self.style: EmulatedAppStyle = style
         self.clock: pygame.Clock = pygame.Clock()
         self.dt_s: float = 0
+        self._blocking: bool = False
 
         if not self.window.borderless:
             self.window.borderless = True
 
-    def on_event(self, event: pygame.Event): ...
+    def on_event(self, event: pygame.Event):
+        if self.style.on_event is not None:
+            self.style.on_event(event)
 
-    def on_ui(self, main: Interaction): ...
+    def on_ui(self, main: Interaction) -> int | pygame.Cursor | None:
+        if self.style.on_ui is not None:
+            return self.style.on_ui(main)
+        return None
 
     def on_close(self) -> bool | None:
+        if self.style.on_close is not None:
+            return self.style.on_close()
         return True
 
     def close(self):
         self.controls.save_persistent_state()
-        raise SystemExit
+        try:
+            self.window.destroy()
+        except pygame.error:
+            ...
+        if self.style.primary_window:
+            raise SystemExit
 
-    def ui_titlebar(self, titlebar: Interaction):
+    def ui_titlebar(self, _titlebar: Interaction):
         unfocused = not self.window.focused
         maximized = self.controls.maximized
         titlebar_height = self.controls.titlebar_height
@@ -1015,7 +1061,7 @@ class EmulatedApp:
             with element(width=Fill(), height=Fill()):
                 text(title, title_style)
 
-        if len(self.controls._buttons_hitbox) <= 0:
+        if not self.controls._buttons_hitbox:
             return
         styles = self.style.button_styles
         if unfocused:
@@ -1068,7 +1114,7 @@ class EmulatedApp:
             rect(color=clear_color)
         if self.controls.maximized or self.controls.fullscreen:
             return
-        if len(self.controls._resize_hitbox) <= 0:
+        if not self.controls._resize_hitbox:
             return
         resize_hitbox = next(iter(self.controls._resize_hitbox.values()))
         for hitbox in resize_hitbox.values():
@@ -1076,77 +1122,79 @@ class EmulatedApp:
                 width=hitbox.w, height=hitbox.h, position=Absolute(hitbox.y, hitbox.x)
             )
 
-    def run(self):
-        while True:
-            for event in pygame.event.get():
-                if (
-                    event.type == pygame.QUIT
-                    or (
-                        event.type == pygame.WINDOWCLOSE and event.window == self.window
-                    )
-                ) and self.on_close() is not False:
-                    self.close()
-                self.context.process_event(event)
-                self.controls.process_event(event)
-                self.on_event(event)
+    def process_event(self, event: pygame.Event) -> bool:
+        if (
+            event.type == pygame.QUIT
+            or (event.type == pygame.WINDOWCLOSE and event.window == self.window)
+        ) and self.on_close() is not False:
+            self.close()
+            return True
+        self.context.process_event(event)
+        self.controls.process_event(event)
+        self.on_event(event)
+        return False
 
-            renderer = getattr(self.context.canvas, "renderer", None)
-            unfocused = not self.window.focused
+    def frame(self) -> CursorLike | None:
+        renderer = getattr(self.context.canvas, "renderer", None)
+        unfocused = not self.window.focused
 
-            clear_color = self.style.clear_color
-            if unfocused:
-                clear_color = self.style.unfocused_clear_color
-            if clear_color is not None:
-                if renderer is None:
-                    self.window.get_surface().fill(clear_color)
-                else:
-                    renderer.draw_color = clear_color
-                    renderer.clear()
-
-            action: HitTestResult = self.controls.update()
-            user_cursor = None
-
-            using_style = self.style.using_style
-            if self.controls.maximized or self.controls.fullscreen:
-                using_style = self.style.maximized_using_style
-            with using(self.context, using_style):
-                self.ui_using(clear_color)
-                titlebar_height = self.controls.titlebar_height
-                if titlebar_height > 0:
-                    with begin(
-                        width=Fill(),
-                        height=titlebar_height,
-                        axis=Axis.X,
-                        padding=0,
-                        spacing=0,
-                    ) as titlebar:
-                        self.ui_titlebar(titlebar)
-                with (
-                    push_id(self),
-                    begin(
-                        self.style.client_area_style, width=Fill(), height=Fill()
-                    ) as main,
-                ):
-                    if self.style.client_area_clear_color is not None:
-                        rect(
-                            color=self.style.client_area_clear_color,
-                            padding=0,
-                            border_width=0,
-                            border_radius=0,
-                            aspect_ratio=0,
-                            z=float("-inf"),
-                        )
-                    user_cursor = self.on_ui(main)
-
-            self.controls.apply_cursor(
-                action, user_cursor
-            )  # todo replace None with truth from UI after enstablished cursor system
-
+        clear_color = self.style.clear_color
+        if unfocused:
+            clear_color = self.style.unfocused_clear_color
+        if clear_color is not None:
             if renderer is None:
-                self.window.flip()
+                self.window.get_surface().fill(clear_color)
             else:
-                renderer.present()
+                renderer.draw_color = clear_color
+                renderer.clear()
 
+        action: HitTestResult = self.controls.update()
+        user_cursor = None
+
+        using_style = self.style.using_style
+        if self.controls.maximized or self.controls.fullscreen:
+            using_style = self.style.maximized_using_style
+        with using(self.context, using_style):
+            self.ui_using(clear_color)
+            titlebar_height = self.controls.titlebar_height
+            if titlebar_height > 0:
+                with begin(
+                    width=Fill(),
+                    height=titlebar_height,
+                    axis=Axis.X,
+                    padding=0,
+                    spacing=0,
+                ) as titlebar:
+                    self.ui_titlebar(titlebar)
+            with (
+                push_id(self),
+                begin(
+                    self.style.client_area_style, width=Fill(), height=Fill()
+                ) as main,
+            ):
+                if self.style.client_area_clear_color is not None:
+                    rect(
+                        color=self.style.client_area_clear_color,
+                        padding=0,
+                        border_width=0,
+                        border_radius=0,
+                        aspect_ratio=0,
+                        z=float("-inf"),
+                    )
+                user_cursor = self.on_ui(main)
+
+        if user_cursor is None:
+            user_cursor = get_cursor()
+        return_cursor = self.controls.get_cursor(action, user_cursor)
+        if self.style.primary_window or self._blocking:
+            self.controls.apply_cursor(action, user_cursor)
+
+        if renderer is None:
+            self.window.flip()
+        else:
+            renderer.present()
+
+        if self.style.target_framerate is not None:
             if self.style.tick_busy_loop:
                 self.dt_s = (
                     self.clock.tick_busy_loop(self.style.target_framerate) / 1000.0
@@ -1155,6 +1203,22 @@ class EmulatedApp:
                 self.dt_s = self.clock.tick(self.style.target_framerate) / 1000.0
             if self.style.dt_clamp is not None:
                 self.dt_s = pygame.math.clamp(self.dt_s, *self.style.dt_clamp)
+
+        return return_cursor
+
+    def run(self):
+        while True:
+            closed = False
+            for event in pygame.event.get():
+                if self.process_event(event):
+                    closed = True
+                    break
+            if closed:
+                break
+
+            self._blocking = True
+            self.frame()
+            self._blocking = False
 
 
 class App:
@@ -1177,45 +1241,56 @@ class App:
         self.clock: pygame.Clock = pygame.Clock()
         self.dt_s: float = 0
 
-    def on_event(self, event: pygame.Event): ...
+    def on_event(self, event: pygame.Event):
+        if self.style.on_event is not None:
+            self.style.on_event(event)
 
-    def on_ui(self): ...
+    def on_ui(self):
+        if self.style.on_ui is not None:
+            self.style.on_ui()
 
     def on_close(self) -> bool | None:
+        if self.style.on_close is not None:
+            return self.style.on_close()
         return True
 
     def close(self):
-        raise SystemExit
+        try:
+            self.window.destroy()
+        except pygame.error:
+            ...
+        if self.style.primary_window:
+            raise SystemExit
 
-    def run(self):
-        while True:
-            for event in pygame.event.get():
-                if (
-                    event.type == pygame.QUIT
-                    or (
-                        event.type == pygame.WINDOWCLOSE and event.window == self.window
-                    )
-                ) and self.on_close() is not False:
-                    self.close()
-                self.context.process_event(event)
-                self.on_event(event)
+    def process_event(self, event: pygame.Event):
+        if (
+            event.type == pygame.QUIT
+            or (event.type == pygame.WINDOWCLOSE and event.window == self.window)
+        ) and self.on_close() is not False:
+            self.close()
+            return True
+        self.context.process_event(event)
+        self.on_event(event)
+        return False
 
-            renderer = getattr(self.context.canvas, "renderer", None)
-            if self.style.clear_color is not None:
-                if renderer is None:
-                    self.window.get_surface().fill(self.style.clear_color)
-                else:
-                    renderer.draw_color = self.style.clear_color
-                    renderer.clear()
-
-            with using(self.context, self.style.using_style):
-                self.on_ui()
-
+    def frame(self):
+        renderer = getattr(self.context.canvas, "renderer", None)
+        if self.style.clear_color is not None:
             if renderer is None:
-                self.window.flip()
+                self.window.get_surface().fill(self.style.clear_color)
             else:
-                renderer.present()
+                renderer.draw_color = self.style.clear_color
+                renderer.clear()
 
+        with using(self.context, self.style.using_style):
+            self.on_ui()
+
+        if renderer is None:
+            self.window.flip()
+        else:
+            renderer.present()
+
+        if self.style.target_framerate is not None:
             if self.style.tick_busy_loop:
                 self.dt_s = (
                     self.clock.tick_busy_loop(self.style.target_framerate) / 1000.0
@@ -1224,3 +1299,15 @@ class App:
                 self.dt_s = self.clock.tick(self.style.target_framerate) / 1000.0
             if self.style.dt_clamp is not None:
                 self.dt_s = pygame.math.clamp(self.dt_s, *self.style.dt_clamp)
+
+    def run(self):
+        while True:
+            closed = False
+            for event in pygame.event.get():
+                if self.process_event(event):
+                    closed = True
+                    break
+            if closed:
+                break
+
+            self.frame()
