@@ -18,7 +18,7 @@ __all__ = (
     "url_svg",
 )
 
-from dimi._icon import (
+from ._icon import (
     DynamicPackedIcon,
     FetchFailBehavior,
     IconifyStyle,

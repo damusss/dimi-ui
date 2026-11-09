@@ -5,7 +5,6 @@ import typing
 
 import pygame
 
-from dimi._cursor import get_cursor
 from dimi._dimi import begin, element, image, push_id, rect, text, using, when
 from dimi._icon import PackedIcon, svg
 from dimi._interaction import Interaction
@@ -21,6 +20,7 @@ from dimi._primitives import (
     FontAlign,
 )
 from dimi._style import ImageStyle, RectStyle, Style, TextStyle
+from dimi._widgets.cursor import get_cursor
 from dimi.error import IllegalOperationError
 
 if typing.TYPE_CHECKING:

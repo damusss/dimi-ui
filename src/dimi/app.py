@@ -14,7 +14,7 @@ __all__ = (
     "TitlebarButtonStyles",
 )
 
-from dimi._app import (
+from ._app import (
     App,
     AppStyle,
     Cursors,

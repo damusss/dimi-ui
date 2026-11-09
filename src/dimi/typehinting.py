@@ -5,6 +5,7 @@ __all__ = (
     "Component",
     "ComputedLayout",
     "CursorLike",
+    "CursorStyleOverrides",
     "DirectionalMeasure",
     "EllipseStyleOverrides",
     "EmulatedAppStyleOverrides",
@@ -31,16 +32,15 @@ __all__ = (
     "URLSVGStyleOverrides",
 )
 
-from dimi._app import (
+from ._app import (
     AppStyleOverrides,
     CachedHitboxes,
     EmulatedAppStyleOverrides,
     EmulatedWindowControlsStyleOverrides,
 )
-from dimi._canvas import Canvas
-from dimi._components import Component
-from dimi._entry_line import EntryLineState
-from dimi._icon import (
+from ._canvas import Canvas
+from ._components import Component
+from ._icon import (
     IconifyStyleOverrides,
     LocalImageStyleOverrides,
     LocalSVGStyleOverrides,
@@ -49,17 +49,16 @@ from dimi._icon import (
     URLImageStyleOverrides,
     URLSVGStyleOverrides,
 )
-from dimi._interaction import ComputedLayout, Interaction
-from dimi._node import Node
-from dimi._primitives import (
+from ._interaction import ComputedLayout, Interaction
+from ._node import Node
+from ._primitives import (
     CursorLike,
     DirectionalMeasure,
     Measure,
     Size,
     SizeIntent,
 )
-from dimi._scroll import ScrollState, ScrolLStyleOverrides
-from dimi._style import (
+from ._style import (
     EllipseStyleOverrides,
     ImageStyleOverrides,
     LineStyleOverrides,
@@ -67,3 +66,6 @@ from dimi._style import (
     StyleOverrides,
     TextStyleOverrides,
 )
+from ._widgets.cursor import CursorStyleOverrides
+from ._widgets.entry_line import EntryLineState
+from ._widgets.scroll import ScrollState, ScrolLStyleOverrides

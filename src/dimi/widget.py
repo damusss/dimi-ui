@@ -16,8 +16,9 @@ __all__ = (
     "scroll",
 )
 
-from dimi._cursor import CursorStyle, cursor, get_cursor
-from dimi._entry_line import (
+from ._primitives import WIDGET_GLOBAL_STATE as GLOBAL_STATE
+from ._widgets.cursor import CursorStyle, cursor, get_cursor
+from ._widgets.entry_line import (
     EntryLineBindings,
     EntryLineConfig,
     EntryLineHotkeys,
@@ -27,11 +28,8 @@ from dimi._entry_line import (
     EntryLineValidator,
     entry_line,
 )
-from dimi._primitives import WIDGET_GLOBAL_STATE
-from dimi._scroll import (
+from ._widgets.scroll import (
     ScrollAxis,
     ScrollStyle,
     scroll,
 )
-
-GLOBAL_STATE = WIDGET_GLOBAL_STATE
