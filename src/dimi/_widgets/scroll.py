@@ -21,6 +21,8 @@ class ScrollAxis(enum.StrEnum):
 
 
 class ScrollStyle(typing.NamedTuple):
+    __module__ = "dimi.widget"
+
     axis: ScrollAxis = ScrollAxis.BOTH_INHERIT_PRIMARY
     opposite_axis_modifier: int | None = pygame.KMOD_SHIFT
     speed: float = 40
@@ -50,6 +52,28 @@ class ScrollState:
     @property
     def children_offset(self) -> tuple[float, float]:
         return -self._instance["scroll"].x, -self._instance["scroll"].y
+
+    @property
+    def can_scroll(self) -> bool:
+        return self.can_scroll_x or self.can_scroll_y
+
+    @property
+    def can_scroll_x(self) -> bool:
+        if self._instance["style"].axis == ScrollAxis.Y or (
+            self._instance["style"].axis == ScrollAxis.INHERIT
+            and self._instance["container_axis"] == Axis.Y
+        ):
+            return False
+        return self._instance["overflow"].x > 0
+
+    @property
+    def can_scroll_y(self) -> bool:
+        if self._instance["style"].axis == ScrollAxis.X or (
+            self._instance["style"].axis == ScrollAxis.INHERIT
+            and self._instance["container_axis"] == Axis.X
+        ):
+            return False
+        return self._instance["overflow"].y > 0
 
     def scroll(self, x: float = 0, y: float = 0, apply_axis_constraint: bool = True):
         scroll_scroll(self._instance, x, y, apply_axis_constraint)
@@ -199,7 +223,6 @@ def scroll(
             self["scroll"].y = perc_y * self["overflow"][1]
 
     scroll_clamp(self)
-
     if interaction.bounds_hovered:
         ScrollState._bounds_hovered_id = self["id"]
 

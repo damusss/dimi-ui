@@ -5,12 +5,13 @@ import pygame
 from dimi._context import Context
 from dimi._dimi import get_current_context, register_widget
 from dimi._interaction import Interaction
+from dimi._primitives import CursorLike
 from dimi.error import MissingActiveContexError, MissingElementForWidget
-
-type CursorLike = int | pygame.Cursor
 
 
 class CursorStyle(typing.NamedTuple):
+    __module__ = "dimi.widget"
+
     hovered: CursorLike | None = pygame.SYSTEM_CURSOR_HAND
     bounds_hovered: CursorLike | None = None
     held: CursorLike | None = None
@@ -27,15 +28,11 @@ class CursorStyleOverrides(typing.TypedDict, total=False):
 CURSOR_DEFAULT_STYLE = CursorStyle()
 
 
-class CursorGlobalState:
-    cursor: typing.ClassVar[CursorLike | None] = None
-
-    @classmethod
-    def on_start(cls, _context: Context):
-        cls.cursor = None
-
-
 class CursorState:
+    _cursor: typing.ClassVar[CursorLike | None] = None
+
+    __module__ = "dimi.typehinting"
+
     def __enter__(self) -> typing.Self:
         return self
 
@@ -43,6 +40,10 @@ class CursorState:
 
 
 CURSOR_STATE = CursorState()
+
+
+def cursor_on_start(_context: Context):
+    CursorState._cursor = None
 
 
 def cursor(
@@ -76,13 +77,13 @@ def cursor(
             assigned = style.bounds_hovered
 
     if assigned is not None:
-        CursorGlobalState.cursor = assigned
+        CursorState._cursor = assigned
 
     return CURSOR_STATE
 
 
 def get_cursor() -> CursorLike | None:
-    return CursorGlobalState.cursor
+    return CursorState._cursor
 
 
-register_widget("cursor", on_start=CursorGlobalState.on_start)
+register_widget("cursor", on_start=cursor_on_start)

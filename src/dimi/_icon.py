@@ -490,17 +490,15 @@ def svg_rasterize_tint_context_cache(
     if tint is not None:
         tint = pygame.Color(tint).hex
     canva_key = (svg_cache_key, style.size, tint)
-    if canva_key in context.canvas._icon_cache:
-        rasterized = context.canvas._icon_cache[canva_key]
-    else:
+    rasterized = context.canvas._get_cache("icon", canva_key)
+    if rasterized is None:
         rasterized = rasterize_and_tint_svg(
             raw_svg,
             style.size,
             style.tint,
             getattr(context.canvas, "renderer", None),
         )
-        context.canvas._icon_cache[canva_key] = rasterized
-    context.canvas._icon_pinged.discard(canva_key)
+        context.canvas._set_cache("icon", canva_key, rasterized)
     return rasterized
 
 
@@ -513,14 +511,12 @@ def surf_tint_resize_context_cache(
     if tint is not None:
         tint = pygame.Color(tint).hex
     canva_key = (surf_cache_key, tint, style.size)
-    if canva_key in context.canvas._icon_cache:
-        processed = context.canvas._icon_cache[canva_key]
-    else:
+    processed = context.canvas._get_cache("icon", canva_key)
+    if processed is None:
         processed = tint_and_resize_surf(
             surf, style.tint, style.size, getattr(context.canvas, "renderer", None)
         )
-        context.canvas._icon_cache[canva_key] = processed
-    context.canvas._icon_pinged.discard(canva_key)
+        context.canvas._set_cache("icon", canva_key, processed)
     return processed
 
 

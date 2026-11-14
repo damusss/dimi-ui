@@ -1,4 +1,5 @@
 import enum
+import math
 
 import pygame
 
@@ -18,6 +19,7 @@ from dimi._primitives import (
     PointsOrigin,
     R,
     T,
+    Transform,
     anchor_rect,
     get_directional_measure,
     measure_value,
@@ -91,6 +93,61 @@ def image_parse_style(bounds: pygame.Rect, padding, width, height, style: ImageS
         )
 
     return fit_rect, border_radius, nine_patch_inset_size
+
+
+def image_parse_transform(
+    image_w: int, image_h: int, transform: Transform | None, fit_rect: pygame.Rect
+) -> tuple[pygame.Rect, float, tuple[float, float], bool, bool]:
+    transformed_rect = fit_rect
+
+    if transform is not None:
+        angle = transform.angle_deg
+        flip_x = transform.flip_x
+        flip_y = transform.flip_y
+        angle_origin = transform.angle_origin
+        if transform.scale_origin is None:
+            scale_origin = (image_w / 2, image_h / 2)
+        else:
+            scale_origin = transform.scale_origin
+        transformed_rect = pygame.Rect(
+            fit_rect.x
+            + scale_origin[0] * (fit_rect.w / image_w) * (1 - transform.scale[0])
+            + transform.offset[0],
+            fit_rect.y
+            + scale_origin[1] * (fit_rect.h / image_h) * (1 - transform.scale[1])
+            + transform.offset[1],
+            fit_rect.w * transform.scale[0],
+            fit_rect.h * transform.scale[1],
+        )
+        if angle_origin is None:
+            angle_origin = (transformed_rect.w / 2, transformed_rect.h / 2)
+        else:
+            angle_origin = (
+                angle_origin[0] * (transformed_rect.w / image_w),
+                angle_origin[1] * (transformed_rect.h / image_h),
+            )
+
+    else:
+        angle = 0
+        flip_x = flip_y = False
+        angle_origin = (transformed_rect.w / 2, transformed_rect.h / 2)
+
+    return transformed_rect, angle, angle_origin, flip_x, flip_y
+
+
+def image_repeat_translate_angle(
+    original: pygame.Rect, translated: pygame.Rect, angle: float
+) -> pygame.Rect:
+    if angle == 0:
+        return translated
+    ox, oy = translated.center
+    gx, gy = original.center
+    angle_rad = math.radians(angle)
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    rotated_x = cos_a * (ox - gx) - sin_a * (oy - gy) + gx
+    rotated_y = sin_a * (ox - gx) + cos_a * (oy - gy) + gy
+    return translated.move_to(center=(rotated_x, rotated_y))
 
 
 def rect_parse_style(bounds: pygame.Rect, style: RectStyle):

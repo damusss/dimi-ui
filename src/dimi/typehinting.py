@@ -2,11 +2,14 @@ __all__ = (
     "AppStyleOverrides",
     "CachedHitboxes",
     "Canvas",
+    "CheckboxState",
     "Component",
     "ComputedLayout",
     "CursorLike",
+    "CursorState",
     "CursorStyleOverrides",
     "DirectionalMeasure",
+    "EditStyleOverrides",
     "EllipseStyleOverrides",
     "EmulatedAppStyleOverrides",
     "EmulatedWindowControlsStyleOverrides",
@@ -24,6 +27,9 @@ __all__ = (
     "SVGStyleOverrides",
     "ScrolLStyleOverrides",
     "ScrollState",
+    "ScrollbarHandleState",
+    "ScrollbarState",
+    "ScrollbarStyleOverrides",
     "Size",
     "SizeIntent",
     "StyleOverrides",
@@ -59,6 +65,7 @@ from ._primitives import (
     SizeIntent,
 )
 from ._style import (
+    EditStyleOverrides,
     EllipseStyleOverrides,
     ImageStyleOverrides,
     LineStyleOverrides,
@@ -66,6 +73,12 @@ from ._style import (
     StyleOverrides,
     TextStyleOverrides,
 )
-from ._widgets.cursor import CursorStyleOverrides
+from ._widgets.checkbox import CheckboxState
+from ._widgets.cursor import CursorState, CursorStyleOverrides
 from ._widgets.entry_line import EntryLineState
 from ._widgets.scroll import ScrollState, ScrolLStyleOverrides
+from ._widgets.scrollbar import (
+    ScrollbarHandleState,
+    ScrollbarState,
+    ScrollbarStyleOverrides,
+)

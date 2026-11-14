@@ -2,6 +2,7 @@ import typing
 
 import pygame
 
+from dimi._canvas import Canvas, RendererCanvas, SurfaceCanvas
 from dimi._components import Component
 from dimi._context import Context
 from dimi._interaction import Button, ButtonStatus, Interaction
@@ -21,6 +22,7 @@ from dimi._style import (
     TextStyleOverrides,
 )
 from dimi.error import (
+    CacheRegistrationError,
     MissingActiveContexError,
     WidgetRegistrationError,
 )
@@ -124,6 +126,16 @@ def register_widget(
         Context._registered_widget_on_event[widget] = on_event
     if on_start is not None:
         Context._registered_widget_on_start[widget] = on_start
+
+
+def register_canvas_cache(
+    cache: str,
+    canvas_targets: tuple[type[Canvas], ...] = (RendererCanvas, SurfaceCanvas),
+):
+    for canvas_target in canvas_targets:
+        if cache in canvas_target._registered_caches:
+            raise CacheRegistrationError(cache, canvas_target, True)
+        canvas_target._registered_caches.add(cache)
 
 
 def element(
@@ -237,7 +249,7 @@ def when(
 type NestedAttributesFormat = dict[str, NestedAttributesFormat | typing.Any]
 
 
-def _unflatten_nested_attributes_format(
+def unflatten_nested_attributes_format(
     attributes_format: NestedAttributesFormat,
 ) -> NestedAttributesFormat:
     unflattened = {}
@@ -252,7 +264,7 @@ def _unflatten_nested_attributes_format(
                 unflattened[main] = {parts: value}
         else:
             if isinstance(value, dict):
-                value = _unflatten_nested_attributes_format(value)
+                value = unflatten_nested_attributes_format(value)
             if (
                 key in unflattened
                 and isinstance(unflattened[key], dict)
@@ -264,7 +276,7 @@ def _unflatten_nested_attributes_format(
 
     for key, value in unflattened.items():
         if isinstance(value, dict):
-            unflattened[key] = _unflatten_nested_attributes_format(value)
+            unflattened[key] = unflatten_nested_attributes_format(value)
 
     return unflattened
 
@@ -272,7 +284,7 @@ def _unflatten_nested_attributes_format(
 def replace_nested_style[StyleNamedTupleType](
     style: StyleNamedTupleType, attributes_format: NestedAttributesFormat
 ) -> StyleNamedTupleType:
-    unflattened_format = _unflatten_nested_attributes_format(attributes_format)
+    unflattened_format = unflatten_nested_attributes_format(attributes_format)
     changes = {}
     for key, value in unflattened_format.items():
         if isinstance(value, dict):

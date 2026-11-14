@@ -300,6 +300,7 @@ class Absolute(typing.NamedTuple):
     right: Measure | None = None
     center_x: Measure | None = None
     center_y: Measure | None = None
+    ignore_parent_offset: bool = True
 
 
 class Wrap(typing.NamedTuple):

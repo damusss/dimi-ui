@@ -6,6 +6,7 @@ import pygame
 from dimi._components import Component
 from dimi._primitives import Directions, Measure
 from dimi._style import (
+    EditStyleOverrides,
     EllipseStyle,
     EllipseStyleOverrides,
     ImageStyle,
@@ -18,7 +19,7 @@ from dimi._style import (
     TextStyle,
     TextStyleOverrides,
 )
-from dimi.error import IllegalComponentShortcutError
+from dimi.error import IllegalComponentShortcutError, IllegalStyleEditError
 
 if typing.TYPE_CHECKING:
     from dimi._context import Context
@@ -102,9 +103,9 @@ class Interaction:
 
     @property
     def just_released(self) -> bool:
-        return (
-            self.button == Button.LEFT
-            and self.button_status == ButtonStatus.JUST_RELEASED
+        return self.button == Button.LEFT and (
+            self.button_status == ButtonStatus.JUST_RELEASED
+            or self.button_status == ButtonStatus.CLICKED
         )
 
     @property
@@ -162,6 +163,30 @@ class Interaction:
             Directions(*self._data_node.margins_px),
             self._data_node.spacing_px,
         )
+
+    def edit_style(
+        self,
+        edited_style: Style | None = None,
+        **style_edits: typing.Unpack[EditStyleOverrides],
+    ) -> typing.Self:
+        if not self.context._using:
+            raise IllegalStyleEditError()
+        if not self._is_element:
+            raise IllegalStyleEditError(valid_element=False)
+        if edited_style is not None:
+            if edited_style.position != self._node.style.position:
+                raise IllegalStyleEditError("position")
+        else:
+            if not style_edits:
+                return self
+            edited_style = self._node.style
+        if style_edits:
+            if "position" in style_edits:
+                raise IllegalStyleEditError("position")
+            edited_style = edited_style._fast_replace(style_edits)
+        self._node.style = edited_style
+        self._node.style_args = (None, None)
+        return self
 
     def __enter__(self):
         if self._is_element and not self._is_parent:

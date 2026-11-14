@@ -83,6 +83,7 @@ class Context:
         self._active_id: int | None = None
 
         self._mouse_pos: tuple[int, int] | None = None
+        self._using: bool = False
 
     @property
     def viewport(self) -> pygame.Rect:
@@ -124,17 +125,19 @@ class Context:
             return None
         return interaction_ref()
 
-    def get_widget_state[**FactoryParamSpec](
+    def get_widget_state[**FactoryParamSpec, NotCallableDefault](
         self,
         widget: str,
         init_factory: typing.Callable[
             typing.Concatenate[typing.Hashable, FactoryParamSpec], typing.Any
-        ],
+        ]
+        | NotCallableDefault
+        | None,
         id_: typing.Hashable | None = None,
         *,
         init_args: FactoryParamSpec.args = (),
         init_kwargs: FactoryParamSpec.kwargs | None = None,
-    ) -> typing.Any:
+    ) -> typing.Any | NotCallableDefault:
         if widget not in self._widget_memories:
             if widget not in self._registered_widgets:
                 raise WidgetRegistrationError(
@@ -145,6 +148,8 @@ class Context:
         if id_ is None:
             id_ = self._id_stack[-1]
         if id_ not in memory:
+            if not callable(init_factory):
+                return init_factory
             if init_kwargs is None:
                 state = init_factory(id_, *init_args)
             else:
@@ -175,13 +180,14 @@ class Context:
         yield from self._widget_memories[widget].values()
 
     def _start(self, style=None):
+        self._using = True
         viewport = self.viewport
         self._parent_stack = []
         self._element_stack = []
         self._node = None
         self._style_stacks = {None: [Style()]}
         self._id_stack = [hash("root")]
-        self.canvas._using_start()
+        self.canvas._render_start()
         for start_callback in Context._registered_widget_on_start.values():
             start_callback(self)
         self._begin(
@@ -345,10 +351,9 @@ class Context:
         return -1
 
     def _finish(self):
+        self._using = False
         root = self._end()
         viewport = self.viewport
-
-        self.canvas._render_start()
 
         self._node_memory.clear()
         root.measure(0, viewport.width, 0, viewport.height)
@@ -360,7 +365,6 @@ class Context:
 
         self._update_interaction_draw(root, self.canvas.viewport)
         self.canvas._render_end()
-        self.canvas._using_end()
 
         just_pressed = self._get_active_mouse_index(pygame.mouse.get_just_pressed())
         just_released = self._get_active_mouse_index(pygame.mouse.get_just_released())

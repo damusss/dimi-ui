@@ -1117,10 +1117,13 @@ class EmulatedApp:
         if not self.controls._resize_hitbox:
             return
         resize_hitbox = next(iter(self.controls._resize_hitbox.values()))
-        for hitbox in resize_hitbox.values():
-            element(
-                width=hitbox.w, height=hitbox.h, position=Absolute(hitbox.y, hitbox.x)
-            )
+        with push_id((id(self), "blocking-resize-hitboxes")):
+            for hitbox in resize_hitbox.values():
+                element(
+                    width=hitbox.w,
+                    height=hitbox.h,
+                    position=Absolute(hitbox.y, hitbox.x),
+                )
 
     def process_event(self, event: pygame.Event) -> bool:
         if (

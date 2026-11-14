@@ -108,6 +108,33 @@ class StyleOverrides(typing.TypedDict, total=False):
     wrap_children: Wrap | None
 
 
+class EditStyleOverrides(typing.TypedDict, total=False):
+    __module__ = "dimi.typehinting"
+
+    width: Size
+    height: Size
+
+    width_constraint: Constraint | None
+    height_constraint: Constraint | None
+
+    padding: DirectionalMeasure
+    margin: DirectionalMeasure
+    spacing: Measure
+
+    z: float
+    blocking: bool
+    clip_graphics: bool
+
+    self_offset: pygame.typing.Point
+    children_offset: pygame.typing.Point
+
+    axis: Axis
+    align_children: Align
+    align_self: Align
+
+    wrap_children: Wrap | None
+
+
 # todo consider dash size/offset
 class RectStyle(typing.NamedTuple):
     __module__ = "dimi"

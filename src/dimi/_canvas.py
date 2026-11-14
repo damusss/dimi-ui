@@ -10,6 +10,8 @@ from dimi._components import (
     Component,
     ellipse_parse_style,
     image_parse_style,
+    image_parse_transform,
+    image_repeat_translate_angle,
     line_parse_style,
     rect_parse_style,
 )
@@ -31,17 +33,23 @@ from dimi._primitives import (
     measure_value,
 )
 from dimi._style import EllipseStyle, ImageStyle, LineStyle, RectStyle, TextStyle
-from dimi.error import TextRenderingError
+from dimi.error import CacheRegistrationError, TextRenderingError
 
 
 class Canvas(ABC):
     __module__ = "dimi.typehinting"
 
+    _registered_caches: typing.ClassVar[set[str]]
+
     def __init__(self):
         self._component_render_methods: dict[str, typing.Callable] = {}
         self._fonts: dict[tuple[str, bool, bool, bool] | None, pygame.Font] = {}
-        self._icon_cache = {}
-        self._icon_pinged = set()
+
+        self._caches: dict[str, dict[typing.Hashable, typing.Any]] = {}
+        self._inactive_caches: dict[str, set[typing.Hashable]] = {}
+        for cache in self._registered_caches:
+            self._caches[cache] = {}
+            self._inactive_caches[cache] = set()
 
     def _get_font(self, font: Font | None):
         if font is None:
@@ -186,6 +194,60 @@ class Canvas(ABC):
 
         return surface, surface.get_rect(), padding
 
+    def _prepare_caches(self):
+        for cache, caches in self._caches.items():
+            self._inactive_caches[cache] = set(caches.keys())
+
+    def _cleanup_caches(self):
+        for cache, inactive_keys in self._inactive_caches.items():
+            for key in inactive_keys:
+                self._caches[cache].pop(key, None)
+
+    def _render_start(self):
+        self._prepare_caches()
+
+    def _render_end(self):
+        self._cleanup_caches()
+
+    def get_cache(self, cache: str, key: typing.Hashable) -> typing.Any | None:
+        if cache not in self._registered_caches:
+            raise CacheRegistrationError(cache, self.__class__)
+        if cache not in self._caches:
+            self._caches[cache] = {}
+            self._inactive_caches[cache] = set()
+        caches = self._caches[cache]
+        if key in caches:
+            self._inactive_caches[cache].discard(key)
+            return caches[key]
+        return None
+
+    def set_cache[ValueType](
+        self, cache: str, key: typing.Hashable, value: ValueType
+    ) -> ValueType:
+        if cache not in self._registered_caches:
+            raise CacheRegistrationError(cache, self.__class__)
+        if cache not in self._caches:
+            self._caches[cache] = {}
+            self._inactive_caches[cache] = set()
+        self._caches[cache][key] = value
+        if key in self._inactive_caches[cache][key]:
+            self._inactive_caches[cache].discard(key)
+        return value
+
+    def _get_cache(
+        self, cache: str, key: typing.Hashable, ping=True
+    ) -> typing.Any | None:
+        if ping:
+            self._inactive_caches[cache].discard(key)
+        return self._caches[cache].get(key, None)
+
+    def _set_cache(
+        self, cache: str, key: typing.Hashable, value: typing.Any, ping: bool = False
+    ):
+        self._caches[cache][key] = value
+        if ping:
+            self._inactive_caches[cache].discard(key)
+
     @property
     @abstractmethod
     def viewport(self) -> pygame.Rect:
@@ -201,19 +263,6 @@ class Canvas(ABC):
         self, absolute_rect: pygame.Rect, viewport: pygame.Rect
     ) -> pygame.Rect: ...
 
-    def _using_start(self):
-        self._icon_pinged = set(self._icon_cache.keys())
-
-    def _using_end(self):
-        for key in self._icon_pinged:
-            self._icon_cache.pop(key)
-
-    @abstractmethod
-    def _render_start(self): ...
-
-    @abstractmethod
-    def _render_end(self): ...
-
     @abstractmethod
     def _resolve_text(
         self, cache_key: int, text: str, style: TextStyle, wrap_width: int, height: int
@@ -226,6 +275,15 @@ class Canvas(ABC):
 class RendererCanvas(Canvas):
     __module__ = "dimi"
 
+    _registered_caches: typing.ClassVar[set[str]] = {
+        "circle_corner",
+        "ellipse_corner",
+        "text",
+        "image_layers",
+        "line",
+        "icon",
+    }
+
     def __init__(self, renderer: _render.Renderer):
         super().__init__()
         self.renderer = renderer
@@ -236,6 +294,13 @@ class RendererCanvas(Canvas):
             Component.IMAGE: self._render_image,
             Component.LINE: self._render_line,
         }
+
+        self._texture_1pixels = _render.Texture(self.renderer, (1, 1), 32)
+        self._texture_1pixels.blend_mode = pygame.BLENDMODE_BLEND
+        surf_1pixels = pygame.Surface((1, 1), pygame.SRCALPHA)
+        surf_1pixels.fill(0)
+        self._texture_1pixels.update(surf_1pixels)
+
         self._corners_mask_blend_mode = self.renderer.compose_custom_blend_mode(
             (
                 pygame.BLENDFACTOR_ZERO,
@@ -248,30 +313,6 @@ class RendererCanvas(Canvas):
                 pygame.BLENDOPERATION_ADD,
             ),
         )
-        self._cached_circle_corners: dict[tuple[int, int, bool], _render.Texture] = {}
-        self._cached_ellipse_corners: dict[
-            tuple[int, int, int, bool], _render.Texture
-        ] = {}
-        self._pinged_circle_corners: set[tuple[int, int, bool]] = set()
-        self._pinged_ellipse_corners: set[tuple[int, int, int, bool]] = set()
-        self._cached_text: dict[int, tuple[_render.Texture, pygame.Rect, tuple]] = {}
-        self._pinged_text_cache_keys: set[int] = set()
-        self._cached_radius_image_layers: dict[
-            tuple[int, int, tuple], tuple[_render.Texture, list[_render.Texture]]
-        ] = {}
-        self._pinged_radius_image_layers: set[tuple[int, int, tuple]] = set()
-        self._cached_lines: dict[
-            tuple[float, float, float, float, float, str, bool], _render.Texture
-        ] = {}
-        self._pinged_lines: set[tuple[float, float, float, float, float, str, bool]] = (
-            set()
-        )
-
-        self._texture_1pixels = _render.Texture(self.renderer, (1, 1), 32)
-        self._texture_1pixels.blend_mode = pygame.BLENDMODE_BLEND
-        surf_1pixels = pygame.Surface((1, 1), pygame.SRCALPHA)
-        surf_1pixels.fill(0)
-        self._texture_1pixels.update(surf_1pixels)
 
     @property
     def viewport(self) -> pygame.Rect:
@@ -286,477 +327,15 @@ class RendererCanvas(Canvas):
     ) -> pygame.Rect:
         return absolute_rect.move(-viewport.x, -viewport.y)
 
-    def _render_start(self):
-        self._pinged_circle_corners: set[tuple[int, int, bool]] = set(
-            self._cached_circle_corners.keys()
-        )
-        self._pinged_ellipse_corners = set(self._cached_ellipse_corners.keys())
-        self._pinged_text_cache_keys = set(self._cached_text.keys())
-        self._pinged_radius_image_layers = set(self._cached_radius_image_layers.keys())
-        self._pinged_lines = set(self._cached_lines.keys())
-
-    def _render_end(self):
-        for key in self._pinged_circle_corners:
-            self._cached_circle_corners.pop(key)
-        for key in self._pinged_ellipse_corners:
-            self._cached_ellipse_corners.pop(key)
-        for key in self._pinged_text_cache_keys:
-            self._cached_text.pop(key)
-        for key in self._pinged_radius_image_layers:
-            self._cached_radius_image_layers.pop(key)
-        for key in self._pinged_lines:
-            self._cached_lines.pop(key)
-
     def _get_image_1pixels(self):
         return self._texture_1pixels
-
-    def _render_image(
-        self, bounds: pygame.Rect, image: _render.Texture, style: ImageStyle, padding
-    ):
-        if not isinstance(image, _render.Texture):
-            if isinstance(image, pygame.Surface):
-                raise TypeError(
-                    "A Renderer canvas can only draw Texture objects. Convert any Surface to a Texture before using it."
-                )
-            else:
-                raise TypeError("A Renderer canvas can only draw Texture objects.")
-
-        fit_rect, border_radius, ninepatch_inset = image_parse_style(
-            bounds, padding, image.width, image.height, style
-        )
-
-        transformed_rect = fit_rect
-
-        if style.transform is not None:
-            angle = style.transform.angle_deg
-            flip_x = style.transform.flip_x
-            flip_y = style.transform.flip_y
-            angle_origin = style.transform.angle_origin
-            if style.transform.scale_origin is None:
-                scale_origin = (image.width / 2, image.height / 2)
-            else:
-                scale_origin = style.transform.scale_origin
-            transformed_rect = pygame.Rect(
-                fit_rect.x
-                + scale_origin[0]
-                * (fit_rect.w / image.width)
-                * (1 - style.transform.scale[0])
-                + style.transform.offset[0],
-                fit_rect.y
-                + scale_origin[1]
-                * (fit_rect.h / image.height)
-                * (1 - style.transform.scale[1])
-                + style.transform.offset[1],
-                fit_rect.w * style.transform.scale[0],
-                fit_rect.h * style.transform.scale[1],
-            )
-            if angle_origin is not None:
-                angle_origin = (
-                    angle_origin[0] * (transformed_rect.w / image.width),
-                    angle_origin[1] * (transformed_rect.h / image.height),
-                )
-            else:
-                angle_origin = (transformed_rect.w / 2, transformed_rect.h / 2)
-        else:
-            angle = 0
-            flip_x = flip_y = False
-            angle_origin = (transformed_rect.w / 2, transformed_rect.h / 2)
-
-        if style.scale_quality is not None:
-            warnings.warn(
-                "Before pygame 3+ it is not possible to dynamically change a Texture's scale quality. Modify it through the Texture constructor or wait for pygame to be upgraded.",
-                RuntimeWarning,
-            )
-
-        drawing_image = image
-
-        if any(br != 0 for br in border_radius):
-            radius_key = (fit_rect.w, fit_rect.h, border_radius)
-            if radius_key not in self._cached_radius_image_layers:
-                layer_tex = _render.Texture(
-                    self.renderer,
-                    fit_rect.size,
-                    32,
-                    target=True,
-                    scale_quality=0
-                    if style.scale_quality == ScaleQuality.NEAREST
-                    else 1,
-                )  # todo PG3 remove scale quality parameter, use the later setting
-                layer_tex.blend_mode = pygame.BLENDMODE_BLEND
-                corners = []
-                for rad in border_radius:
-                    surf = pygame.Surface((rad, rad), pygame.SRCALPHA)
-                    surf.fill((255, 255, 255, 0))
-                    draw_function = (
-                        pygame.draw.circle
-                        if style.scale_quality == ScaleQuality.NEAREST
-                        else pygame.draw.aacircle
-                    )
-                    draw_function(surf, "white", (rad, rad), rad, draw_top_left=True)
-                    corner_tex = _render.Texture(
-                        self.renderer,
-                        surf.size,
-                        32,
-                        scale_quality=0
-                        if (style.scale_quality == ScaleQuality.NEAREST)
-                        else 1,
-                    )
-                    corner_tex.update(surf)
-                    corner_tex.blend_mode = self._corners_mask_blend_mode
-                    corners.append(corner_tex)
-                self._cached_radius_image_layers[radius_key] = layer_tex, corners
-            self._pinged_radius_image_layers.discard(radius_key)
-            layer_texture, corner_textures = self._cached_radius_image_layers[
-                radius_key
-            ]
-            # todo change the corners scale quality to the image's
-            restore_target = self.renderer.target
-            self.renderer.target = layer_texture
-            self.renderer.draw_color = (255, 255, 255, 0)
-            self.renderer.clear()
-            self._render_texture(
-                image,
-                pygame.Rect(0, 0, fit_rect.w, fit_rect.h),
-                ninepatch_inset,
-                0,
-                None,
-                flip_x,
-                flip_y,
-            )
-            flip_x = flip_y = False
-            ninepatch_inset = None
-            corner_textures[TL].draw(None, (0, 0, border_radius[TL], border_radius[TL]))
-            corner_textures[TR].draw(
-                None,
-                (
-                    fit_rect.w - border_radius[TR],
-                    0,
-                    border_radius[TR],
-                    border_radius[TR],
-                ),
-                flip_x=True,
-            )
-            corner_textures[BL].draw(
-                None,
-                (
-                    0,
-                    fit_rect.h - border_radius[BL],
-                    border_radius[BL],
-                    border_radius[BL],
-                ),
-                flip_y=True,
-            )
-            corner_textures[BR].draw(
-                None,
-                (
-                    fit_rect.w - border_radius[BR],
-                    fit_rect.h - border_radius[BR],
-                    border_radius[BR],
-                    border_radius[BR],
-                ),
-                flip_x=True,
-                flip_y=True,
-            )
-            self.renderer.target = restore_target
-            drawing_image = layer_texture
-
-        restore_blend_mode = None
-        restore_color = None
-        restore_alpha = None
-
-        if style.blend_mode is not None:
-            restore_blend_mode = drawing_image.blend_mode
-            drawing_image.blend_mode = style.blend_mode
-        if style.color_modifier is not None:
-            restore_color = drawing_image.color
-            drawing_image.color = style.color_modifier
-        if style.alpha_modifier is not None:
-            restore_alpha = drawing_image.alpha
-            drawing_image.alpha = style.alpha_modifier
-
-        self._render_texture(
-            drawing_image,
-            transformed_rect,
-            ninepatch_inset,
-            angle,
-            angle_origin,
-            flip_x,
-            flip_y,
-        )
-        if style.repeat in (ImageRepeat.X, ImageRepeat.BOTH):
-            self._repeat_image_x(
-                drawing_image,
-                bounds,
-                transformed_rect,
-                angle,
-                angle_origin,
-                flip_x,
-                flip_y,
-                ninepatch_inset,
-                style.repeat,
-            )
-        if style.repeat in (ImageRepeat.Y, ImageRepeat.BOTH):
-            self._repeat_image_y(
-                drawing_image,
-                bounds,
-                transformed_rect,
-                0,
-                angle,
-                angle_origin,
-                flip_x,
-                flip_y,
-                ninepatch_inset,
-            )
-
-        if restore_blend_mode:
-            drawing_image.blend_mode = restore_blend_mode
-        if restore_color:
-            drawing_image.color = restore_color
-        if restore_alpha:
-            drawing_image.alpha = restore_alpha
-
-    def _repeat_angle(self, original: pygame.Rect, translated: pygame.Rect, angle):
-        if angle == 0:
-            return translated
-        ox, oy = translated.center
-        gx, gy = original.center
-        angle_rad = math.radians(angle)
-        rotated_x = (
-            math.cos(angle_rad) * (ox - gx) - math.sin(angle_rad) * (oy - gy) + gx
-        )
-        rotated_y = (
-            math.sin(angle_rad) * (ox - gx) + math.cos(angle_rad) * (oy - gy) + gy
-        )
-        return translated.move_to(center=(rotated_x, rotated_y))
-
-    def _repeat_image_x(
-        self,
-        image,
-        bounds,
-        transformed_rect,
-        angle,
-        angle_origin,
-        flip_x,
-        flip_y,
-        patch_size,
-        repeat,
-    ):
-        if angle != 0:
-            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
-            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
-                center=bounds.center
-            )
-        else:
-            space_left_rect = bounds
-        left_space = transformed_rect.x - space_left_rect.x
-        if left_space > 0:
-            left_amount = int(left_space / transformed_rect.w) + 1
-            cursor = -transformed_rect.w * left_amount
-            for i in range(left_amount):
-                self._render_texture(
-                    image,
-                    self._repeat_angle(
-                        transformed_rect, transformed_rect.move(cursor, 0), angle
-                    ),
-                    patch_size,
-                    angle,
-                    angle_origin,
-                    flip_x,
-                    flip_y,
-                )
-                if repeat == ImageRepeat.BOTH:
-                    self._repeat_image_y(
-                        image,
-                        bounds,
-                        transformed_rect,
-                        cursor,
-                        angle,
-                        angle_origin,
-                        flip_x,
-                        flip_y,
-                        patch_size,
-                    )
-                cursor += transformed_rect.w
-                if transformed_rect.x + cursor > space_left_rect.right:
-                    break
-        right_space = space_left_rect.right - transformed_rect.right
-        if right_space > 0:
-            right_amount = int(right_space / transformed_rect.w) + 1
-            cursor = transformed_rect.w * right_amount
-            for i in range(right_amount):
-                self._render_texture(
-                    image,
-                    self._repeat_angle(
-                        transformed_rect, transformed_rect.move(cursor, 0), angle
-                    ),
-                    patch_size,
-                    angle,
-                    angle_origin,
-                    flip_x,
-                    flip_y,
-                )
-                if repeat == ImageRepeat.BOTH:
-                    self._repeat_image_y(
-                        image,
-                        bounds,
-                        transformed_rect,
-                        cursor,
-                        angle,
-                        angle_origin,
-                        flip_x,
-                        flip_y,
-                        patch_size,
-                    )
-                cursor -= transformed_rect.w
-                if transformed_rect.x + cursor + transformed_rect.w < space_left_rect.x:
-                    break
-
-    def _repeat_image_y(
-        self,
-        image,
-        bounds,
-        transformed_rect,
-        cursor_x,
-        angle,
-        angle_origin,
-        flip_x,
-        flip_y,
-        patch_size,
-    ):
-        if angle != 0:
-            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
-            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
-                center=bounds.center
-            )
-        else:
-            space_left_rect = bounds
-        top_space = transformed_rect.y - space_left_rect.y
-        if top_space > 0:
-            top_amount = int(top_space / transformed_rect.h) + 1
-            cursor = -transformed_rect.h * top_amount
-            for i in range(top_amount):
-                self._render_texture(
-                    image,
-                    self._repeat_angle(
-                        transformed_rect, transformed_rect.move(cursor_x, cursor), angle
-                    ),
-                    patch_size,
-                    angle,
-                    angle_origin,
-                    flip_x,
-                    flip_y,
-                )
-                cursor += transformed_rect.h
-                if transformed_rect.y + cursor > space_left_rect.bottom:
-                    break
-        bottom_space = space_left_rect.bottom - transformed_rect.bottom
-        if bottom_space > 0:
-            bottom_amount = int(bottom_space / transformed_rect.h) + 1
-            cursor = transformed_rect.h * bottom_amount
-            for i in range(bottom_amount):
-                self._render_texture(
-                    image,
-                    self._repeat_angle(
-                        transformed_rect, transformed_rect.move(cursor_x, cursor), angle
-                    ),
-                    patch_size,
-                    angle,
-                    angle_origin,
-                    flip_x,
-                    flip_y,
-                )
-                cursor -= transformed_rect.h
-                if transformed_rect.y + cursor + transformed_rect.h < space_left_rect.y:
-                    break
-
-    def _render_texture(
-        self,
-        image: _render.Texture,
-        rect: pygame.Rect,
-        patch_size: int | None,
-        angle,
-        angle_origin: pygame.typing.Point | None,
-        flip_x,
-        flip_y,
-    ):
-        if patch_size is None:
-            image.draw(None, rect, angle, angle_origin, flip_x, flip_y)
-            return
-        w, h = image.width, image.height
-        tl_r = pygame.Rect(rect.x, rect.y, patch_size, patch_size)
-        tl_s = pygame.Rect(0, 0, patch_size, patch_size)
-        tr_r = pygame.Rect(rect.right - patch_size, rect.y, patch_size, patch_size)
-        tr_s = pygame.Rect(w - patch_size, 0, patch_size, patch_size)
-        bl_r = pygame.Rect(rect.x, rect.bottom - patch_size, patch_size, patch_size)
-        bl_s = pygame.Rect(0, h - patch_size, patch_size, patch_size)
-        br_r = pygame.Rect(
-            rect.right - patch_size, rect.bottom - patch_size, patch_size, patch_size
-        )
-        br_s = pygame.Rect(w - patch_size, h - patch_size, patch_size, patch_size)
-        l_r = pygame.Rect(
-            rect.x, rect.y + patch_size, patch_size, rect.h - patch_size * 2
-        )
-        l_s = pygame.Rect(0, patch_size, patch_size, h - patch_size * 2)
-        r_r = pygame.Rect(
-            rect.right - patch_size,
-            rect.y + patch_size,
-            patch_size,
-            rect.h - patch_size * 2,
-        )
-        r_s = pygame.Rect(w - patch_size, patch_size, patch_size, h - patch_size * 2)
-        t_r = pygame.Rect(
-            rect.x + patch_size, rect.y, rect.w - patch_size * 2, patch_size
-        )
-        t_s = pygame.Rect(patch_size, 0, w - patch_size * 2, patch_size)
-        b_r = pygame.Rect(
-            rect.x + patch_size,
-            rect.bottom - patch_size,
-            rect.w - patch_size * 2,
-            patch_size,
-        )
-        b_s = pygame.Rect(patch_size, h - patch_size, w - patch_size * 2, patch_size)
-        c_r = pygame.Rect(
-            rect.x + patch_size,
-            rect.y + patch_size,
-            rect.w - patch_size * 2,
-            rect.h - patch_size * 2,
-        )
-        c_s = pygame.Rect(
-            patch_size, patch_size, w - patch_size * 2, h - patch_size * 2
-        )
-        if flip_x:
-            tl_r.right = rect.right
-            tr_r.x = rect.x
-            bl_r.right = rect.right
-            br_r.x = rect.x
-            l_r.right = rect.right
-            r_r.x = rect.x
-        if flip_y:
-            tl_r.bottom = rect.bottom
-            tr_r.bottom = rect.bottom
-            bl_r.y = rect.y
-            br_r.y = rect.y
-            t_r.bottom = rect.bottom
-            b_r.y = rect.y
-        for sr, dr in zip(
-            (tl_s, tr_s, bl_s, br_s, l_s, r_s, t_s, b_s, c_s),
-            (tl_r, tr_r, bl_r, br_r, l_r, r_r, t_r, b_r, c_r),
-        ):
-            if sr.w == 0 or sr.h == 0 or dr.w == 0 or dr.h == 0:
-                continue
-            origin = angle_origin
-            if angle != 0:
-                origin = (
-                    angle_origin[0] - (dr.x - rect.x),
-                    angle_origin[1] - (dr.y - rect.y),
-                )
-            image.draw(sr, dr, angle, origin, flip_x, flip_y)
 
     def _resolve_text(
         self, cache_key: int, text: str, style: TextStyle, wrap_width: int, height: int
     ) -> tuple[int, int]:
-        if cache_key in self._cached_text:
-            texture, rect, padding = self._cached_text[cache_key]
+        cached_text = self._get_cache("text", cache_key)
+        if cached_text is not None:
+            texture, rect, padding = cached_text
             return (rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B])
         surface, rect, padding = self._create_text_render(
             text, style, wrap_width, height
@@ -772,17 +351,18 @@ class RendererCanvas(Canvas):
             )
             texture.update(surface)
             texture.blend_mode = pygame.BLENDMODE_BLEND
-        self._cached_text[cache_key] = (texture, rect, padding)
+        self._set_cache("text", cache_key, (texture, rect, padding), ping=True)
         return rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B]
 
     def _render_text(
         self, bounds: pygame.Rect, _text: str, style: TextStyle, cache_key: int
     ):
-        if cache_key not in self._cached_text:
+        cached_text = self._get_cache("text", cache_key, ping=False)
+        if cached_text is None:
             raise RuntimeError(
                 "Internal error: text was not resolved during the two passes (cached text not found during render pass)"
             )
-        texture, rect, padding = self._cached_text[cache_key]
+        texture, rect, padding = cached_text
         padded_rect = pygame.Rect(
             bounds.x + padding[L],
             bounds.y + padding[T],
@@ -798,7 +378,8 @@ class RendererCanvas(Canvas):
         bw, br, antialias = bw_br_antialias
         br = max(1, br)
         bw = max(0, bw)
-        if bw_br_antialias not in self._cached_circle_corners:
+        tex = self._get_cache("circle_corner", bw_br_antialias)
+        if tex is None:
             surf = pygame.Surface((br, br), pygame.SRCALPHA)
             surf.fill((255, 255, 255, 0))
             draw_function = pygame.draw.aacircle if antialias else pygame.draw.circle
@@ -808,14 +389,14 @@ class RendererCanvas(Canvas):
             )
             tex.update(surf)
             tex.blend_mode = pygame.BLENDMODE_BLEND
-            self._cached_circle_corners[bw_br_antialias] = tex
-        self._pinged_circle_corners.discard(bw_br_antialias)
-        return self._cached_circle_corners[bw_br_antialias]
+            self._set_cache("circle_corner", bw_br_antialias, tex)
+        return tex
 
-    def _get_ellipse_quarter(self, qw_qh_bw_antialias) -> _render.Texture:
+    def _get_ellipse_corner(self, qw_qh_bw_antialias) -> _render.Texture:
         qw, qh, bw, antialias = qw_qh_bw_antialias
         bw = max(0, bw)
-        if qw_qh_bw_antialias not in self._cached_ellipse_corners:
+        tex = self._get_cache("ellipse_corner", qw_qh_bw_antialias)
+        if tex is None:
             if qw == qh:
                 surf = pygame.Surface((qw, qh), pygame.SRCALPHA)
                 surf.fill((255, 255, 255, 0))
@@ -828,7 +409,7 @@ class RendererCanvas(Canvas):
                 )
                 tex.update(surf)
                 tex.blend_mode = pygame.BLENDMODE_BLEND
-                self._cached_ellipse_corners[qw_qh_bw_antialias] = tex
+                self._set_cache("ellipse_corner", qw_qh_bw_antialias, tex)
             else:
                 mult = 1
                 if antialias:
@@ -845,9 +426,8 @@ class RendererCanvas(Canvas):
                 )
                 tex.update(surf)
                 tex.blend_mode = pygame.BLENDMODE_BLEND
-                self._cached_ellipse_corners[qw_qh_bw_antialias] = tex
-        self._pinged_ellipse_corners.discard(qw_qh_bw_antialias)
-        return self._cached_ellipse_corners[qw_qh_bw_antialias]
+                self._set_cache("ellipse_corner", qw_qh_bw_antialias, tex)
+        return tex
 
     def _render_ellipse(self, bounds: pygame.Rect, _, style: EllipseStyle):
         if style.color is None:
@@ -856,7 +436,7 @@ class RendererCanvas(Canvas):
         quarter_w, quarter_h = round(padded_rect.w / 2), round(padded_rect.h / 2)
         if quarter_w <= 0 or quarter_h <= 0:
             return
-        quarter = self._get_ellipse_quarter(
+        quarter = self._get_ellipse_corner(
             (quarter_w, quarter_h, border_width, style.antialias)
         )
         quarter.color = style.color
@@ -1044,7 +624,8 @@ class RendererCanvas(Canvas):
             top = min(point_a[1], point_b[1]) - half_y
             antialias = style.antialias
             cache_key = (half_x, half_y, line_size, dabx, daby, color, antialias)
-            if cache_key not in self._cached_lines:
+            tex = self._get_cache("line", cache_key)
+            if tex is None:
                 surf = pygame.Surface(
                     (abs(dabx) + half_x * 2, abs(daby) + half_y * 2), pygame.SRCALPHA
                 )
@@ -1061,9 +642,7 @@ class RendererCanvas(Canvas):
                 )
                 tex.update(surf)
                 tex.blend_mode = pygame.BLENDMODE_BLEND
-                self._cached_lines[cache_key] = tex
-            self._pinged_lines.discard(cache_key)
-            tex = self._cached_lines[cache_key]
+                self._set_cache("line", cache_key, tex)
             tex.draw(
                 None,
                 (
@@ -1076,9 +655,425 @@ class RendererCanvas(Canvas):
         else:
             self.renderer.draw_line(point_a, point_b)
 
+    def _image_border_radius(
+        self,
+        image: _render.Texture,
+        fit_rect: pygame.Rect,
+        border_radius,
+        style: ImageStyle,
+        flip_x,
+        flip_y,
+        ninepatch_inset,
+    ):
+        radius_key = (fit_rect.w, fit_rect.h, border_radius)
+        layer_cache = self._get_cache("image_layers", radius_key)
+        if layer_cache is None:
+            layer_tex = _render.Texture(
+                self.renderer,
+                fit_rect.size,
+                32,
+                target=True,
+                scale_quality=0 if style.scale_quality == ScaleQuality.NEAREST else 1,
+            )  # todo PG3 remove scale quality parameter, use the later setting
+            layer_tex.blend_mode = pygame.BLENDMODE_BLEND
+            corners = []
+            for rad in border_radius:
+                surf = pygame.Surface((rad, rad), pygame.SRCALPHA)
+                surf.fill((255, 255, 255, 0))
+                draw_function = (
+                    pygame.draw.circle
+                    if style.scale_quality == ScaleQuality.NEAREST
+                    else pygame.draw.aacircle
+                )
+                draw_function(surf, "white", (rad, rad), rad, draw_top_left=True)
+                corner_tex = _render.Texture(
+                    self.renderer,
+                    surf.size,
+                    32,
+                    scale_quality=0
+                    if (style.scale_quality == ScaleQuality.NEAREST)
+                    else 1,
+                )
+                corner_tex.update(surf)
+                corner_tex.blend_mode = self._corners_mask_blend_mode
+                corners.append(corner_tex)
+            layer_cache = layer_tex, corners
+            self._set_cache("image_layers", radius_key, layer_cache)
+
+        # todo: change the corners scale quality to the image's
+        layer_texture, corner_textures = layer_cache
+        restore_target = self.renderer.target
+        self.renderer.target = layer_texture
+        self.renderer.draw_color = (255, 255, 255, 0)
+        self.renderer.clear()
+
+        self._render_texture(
+            image,
+            pygame.Rect(0, 0, fit_rect.w, fit_rect.h),
+            ninepatch_inset,
+            0,
+            None,
+            flip_x,
+            flip_y,
+        )
+        flip_x = flip_y = False
+        ninepatch_inset = None
+
+        corner_textures[TL].draw(None, (0, 0, border_radius[TL], border_radius[TL]))
+        corner_textures[TR].draw(
+            None,
+            (
+                fit_rect.w - border_radius[TR],
+                0,
+                border_radius[TR],
+                border_radius[TR],
+            ),
+            flip_x=True,
+        )
+        corner_textures[BL].draw(
+            None,
+            (
+                0,
+                fit_rect.h - border_radius[BL],
+                border_radius[BL],
+                border_radius[BL],
+            ),
+            flip_y=True,
+        )
+        corner_textures[BR].draw(
+            None,
+            (
+                fit_rect.w - border_radius[BR],
+                fit_rect.h - border_radius[BR],
+                border_radius[BR],
+                border_radius[BR],
+            ),
+            flip_x=True,
+            flip_y=True,
+        )
+
+        self.renderer.target = restore_target
+        return layer_texture, flip_x, flip_y, ninepatch_inset
+
+    def _render_image(
+        self, bounds: pygame.Rect, image: _render.Texture, style: ImageStyle, padding
+    ):
+        if not isinstance(image, _render.Texture):
+            if isinstance(image, pygame.Surface):
+                raise TypeError(
+                    "A Renderer canvas can only draw Texture objects. Convert any Surface to a Texture before using it."
+                )
+            else:
+                raise TypeError("A Renderer canvas can only draw Texture objects.")
+
+        fit_rect, border_radius, ninepatch_inset = image_parse_style(
+            bounds, padding, image.width, image.height, style
+        )
+
+        transformed_rect, angle, angle_origin, flip_x, flip_y = image_parse_transform(
+            image.width, image.height, style.transform, fit_rect
+        )
+
+        if style.scale_quality is not None:
+            warnings.warn(
+                "Before pygame 3+ it is not possible to dynamically change a Texture's scale quality. Modify it through the Texture constructor or wait for pygame to be upgraded.",
+                RuntimeWarning,
+            )
+
+        drawing_image = image
+        if any(br != 0 for br in border_radius):
+            drawing_image, flip_x, flip_y, ninepatch_inset = self._image_border_radius(
+                image, fit_rect, border_radius, style, flip_x, flip_y, ninepatch_inset
+            )
+
+        restore_blend_mode = None
+        restore_color = None
+        restore_alpha = None
+
+        if style.blend_mode is not None:
+            restore_blend_mode = drawing_image.blend_mode
+            drawing_image.blend_mode = style.blend_mode
+        if style.color_modifier is not None:
+            restore_color = drawing_image.color
+            drawing_image.color = style.color_modifier
+        if style.alpha_modifier is not None:
+            restore_alpha = drawing_image.alpha
+            drawing_image.alpha = style.alpha_modifier
+
+        self._render_texture(
+            drawing_image,
+            transformed_rect,
+            ninepatch_inset,
+            angle,
+            angle_origin,
+            flip_x,
+            flip_y,
+        )
+        if style.repeat in (ImageRepeat.X, ImageRepeat.BOTH):
+            self._image_repeat_x(
+                drawing_image,
+                bounds,
+                transformed_rect,
+                angle,
+                angle_origin,
+                flip_x,
+                flip_y,
+                ninepatch_inset,
+                style.repeat,
+            )
+        if style.repeat in (ImageRepeat.Y, ImageRepeat.BOTH):
+            self._image_repeat_y(
+                drawing_image,
+                bounds,
+                transformed_rect,
+                0,
+                angle,
+                angle_origin,
+                flip_x,
+                flip_y,
+                ninepatch_inset,
+            )
+
+        if restore_blend_mode:
+            drawing_image.blend_mode = restore_blend_mode
+        if restore_color:
+            drawing_image.color = restore_color
+        if restore_alpha:
+            drawing_image.alpha = restore_alpha
+
+    def _image_repeat_x(
+        self,
+        image,
+        bounds,
+        transformed_rect,
+        angle,
+        angle_origin,
+        flip_x,
+        flip_y,
+        patch_size,
+        repeat,
+    ):
+        if angle != 0:
+            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
+            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
+                center=bounds.center
+            )
+        else:
+            space_left_rect = bounds
+        left_space = transformed_rect.x - space_left_rect.x
+        if left_space > 0:
+            left_amount = int(left_space / transformed_rect.w) + 1
+            cursor = -transformed_rect.w * left_amount
+            for i in range(left_amount):
+                self._render_texture(
+                    image,
+                    image_repeat_translate_angle(
+                        transformed_rect, transformed_rect.move(cursor, 0), angle
+                    ),
+                    patch_size,
+                    angle,
+                    angle_origin,
+                    flip_x,
+                    flip_y,
+                )
+                if repeat == ImageRepeat.BOTH:
+                    self._image_repeat_y(
+                        image,
+                        bounds,
+                        transformed_rect,
+                        cursor,
+                        angle,
+                        angle_origin,
+                        flip_x,
+                        flip_y,
+                        patch_size,
+                    )
+                cursor += transformed_rect.w
+                if transformed_rect.x + cursor > space_left_rect.right:
+                    break
+        right_space = space_left_rect.right - transformed_rect.right
+        if right_space > 0:
+            right_amount = int(right_space / transformed_rect.w) + 1
+            cursor = transformed_rect.w * right_amount
+            for i in range(right_amount):
+                self._render_texture(
+                    image,
+                    image_repeat_translate_angle(
+                        transformed_rect, transformed_rect.move(cursor, 0), angle
+                    ),
+                    patch_size,
+                    angle,
+                    angle_origin,
+                    flip_x,
+                    flip_y,
+                )
+                if repeat == ImageRepeat.BOTH:
+                    self._image_repeat_y(
+                        image,
+                        bounds,
+                        transformed_rect,
+                        cursor,
+                        angle,
+                        angle_origin,
+                        flip_x,
+                        flip_y,
+                        patch_size,
+                    )
+                cursor -= transformed_rect.w
+                if transformed_rect.x + cursor + transformed_rect.w < space_left_rect.x:
+                    break
+
+    def _image_repeat_y(
+        self,
+        image,
+        bounds,
+        transformed_rect,
+        cursor_x,
+        angle,
+        angle_origin,
+        flip_x,
+        flip_y,
+        patch_size,
+    ):
+        if angle != 0:
+            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
+            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
+                center=bounds.center
+            )
+        else:
+            space_left_rect = bounds
+        top_space = transformed_rect.y - space_left_rect.y
+        if top_space > 0:
+            top_amount = int(top_space / transformed_rect.h) + 1
+            cursor = -transformed_rect.h * top_amount
+            for i in range(top_amount):
+                self._render_texture(
+                    image,
+                    image_repeat_translate_angle(
+                        transformed_rect, transformed_rect.move(cursor_x, cursor), angle
+                    ),
+                    patch_size,
+                    angle,
+                    angle_origin,
+                    flip_x,
+                    flip_y,
+                )
+                cursor += transformed_rect.h
+                if transformed_rect.y + cursor > space_left_rect.bottom:
+                    break
+        bottom_space = space_left_rect.bottom - transformed_rect.bottom
+        if bottom_space > 0:
+            bottom_amount = int(bottom_space / transformed_rect.h) + 1
+            cursor = transformed_rect.h * bottom_amount
+            for i in range(bottom_amount):
+                self._render_texture(
+                    image,
+                    image_repeat_translate_angle(
+                        transformed_rect, transformed_rect.move(cursor_x, cursor), angle
+                    ),
+                    patch_size,
+                    angle,
+                    angle_origin,
+                    flip_x,
+                    flip_y,
+                )
+                cursor -= transformed_rect.h
+                if transformed_rect.y + cursor + transformed_rect.h < space_left_rect.y:
+                    break
+
+    def _render_texture(
+        self,
+        image: _render.Texture,
+        rect: pygame.Rect,
+        patch_size: int | None,
+        angle,
+        angle_origin: pygame.typing.Point | None,
+        flip_x,
+        flip_y,
+    ):
+        if patch_size is None:
+            image.draw(None, rect, angle, angle_origin, flip_x, flip_y)
+            return
+        w, h = image.width, image.height
+        tl_r = pygame.Rect(rect.x, rect.y, patch_size, patch_size)
+        tl_s = pygame.Rect(0, 0, patch_size, patch_size)
+        tr_r = pygame.Rect(rect.right - patch_size, rect.y, patch_size, patch_size)
+        tr_s = pygame.Rect(w - patch_size, 0, patch_size, patch_size)
+        bl_r = pygame.Rect(rect.x, rect.bottom - patch_size, patch_size, patch_size)
+        bl_s = pygame.Rect(0, h - patch_size, patch_size, patch_size)
+        br_r = pygame.Rect(
+            rect.right - patch_size, rect.bottom - patch_size, patch_size, patch_size
+        )
+        br_s = pygame.Rect(w - patch_size, h - patch_size, patch_size, patch_size)
+        l_r = pygame.Rect(
+            rect.x, rect.y + patch_size, patch_size, rect.h - patch_size * 2
+        )
+        l_s = pygame.Rect(0, patch_size, patch_size, h - patch_size * 2)
+        r_r = pygame.Rect(
+            rect.right - patch_size,
+            rect.y + patch_size,
+            patch_size,
+            rect.h - patch_size * 2,
+        )
+        r_s = pygame.Rect(w - patch_size, patch_size, patch_size, h - patch_size * 2)
+        t_r = pygame.Rect(
+            rect.x + patch_size, rect.y, rect.w - patch_size * 2, patch_size
+        )
+        t_s = pygame.Rect(patch_size, 0, w - patch_size * 2, patch_size)
+        b_r = pygame.Rect(
+            rect.x + patch_size,
+            rect.bottom - patch_size,
+            rect.w - patch_size * 2,
+            patch_size,
+        )
+        b_s = pygame.Rect(patch_size, h - patch_size, w - patch_size * 2, patch_size)
+        c_r = pygame.Rect(
+            rect.x + patch_size,
+            rect.y + patch_size,
+            rect.w - patch_size * 2,
+            rect.h - patch_size * 2,
+        )
+        c_s = pygame.Rect(
+            patch_size, patch_size, w - patch_size * 2, h - patch_size * 2
+        )
+        if flip_x:
+            tl_r.right = rect.right
+            tr_r.x = rect.x
+            bl_r.right = rect.right
+            br_r.x = rect.x
+            l_r.right = rect.right
+            r_r.x = rect.x
+        if flip_y:
+            tl_r.bottom = rect.bottom
+            tr_r.bottom = rect.bottom
+            bl_r.y = rect.y
+            br_r.y = rect.y
+            t_r.bottom = rect.bottom
+            b_r.y = rect.y
+        for sr, dr in zip(
+            (tl_s, tr_s, bl_s, br_s, l_s, r_s, t_s, b_s, c_s),
+            (tl_r, tr_r, bl_r, br_r, l_r, r_r, t_r, b_r, c_r),
+        ):
+            if sr.w == 0 or sr.h == 0 or dr.w == 0 or dr.h == 0:
+                continue
+            origin = angle_origin
+            if angle != 0:
+                origin = (
+                    angle_origin[0] - (dr.x - rect.x),
+                    angle_origin[1] - (dr.y - rect.y),
+                )
+            image.draw(sr, dr, angle, origin, flip_x, flip_y)
+
 
 class SurfaceCanvas(Canvas):
     __module__ = "dimi"
+
+    _registered_caches: typing.ClassVar[set[str]] = {
+        "text",
+        "image",
+        "antialiased_ellipse",
+        "icon",
+    }
 
     def __init__(self, surface: pygame.Surface):
         super().__init__()
@@ -1087,15 +1082,10 @@ class SurfaceCanvas(Canvas):
             Component.RECT: self._render_rect,
             Component.ELLIPSE: self._render_ellipse,
             Component.TEXT: self._render_text,
-            Component.IMAGE: lambda _1, _2, _3, _4: ...,  # todo: implement
+            Component.IMAGE: self._render_image,
             Component.LINE: self._render_line,
         }
-        self._cached_text: dict[int, tuple[pygame.Surface, pygame.Rect, tuple]] = {}
-        self._pinged_text_cache_keys: set[int] = set()
-        self._cached_antialiased_ellipses: dict[
-            tuple[int, int, int, tuple], pygame.Surface
-        ] = {}
-        self._pinged_antialiased_ellipses: set[tuple[int, int, int, tuple]] = set()
+
         self._surface_1pixels = pygame.Surface((1, 1), pygame.SRCALPHA)
         self._surface_1pixels.fill(0)
 
@@ -1115,38 +1105,28 @@ class SurfaceCanvas(Canvas):
     def _get_image_1pixels(self):
         return self._surface_1pixels
 
-    def _render_start(self):
-        self._pinged_text_cache_keys = set(self._cached_text.keys())
-        self._pinged_antialiased_ellipses = set(
-            self._cached_antialiased_ellipses.keys()
-        )
-
-    def _render_end(self):
-        for key in self._pinged_text_cache_keys:
-            self._cached_text.pop(key)
-        for key in self._pinged_antialiased_ellipses:
-            self._cached_antialiased_ellipses.pop(key)
-
     def _resolve_text(
         self, cache_key: int, text: str, style: TextStyle, wrap_width: int, height: int
     ) -> tuple[int, int]:
-        if cache_key in self._cached_text:
-            surface, rect, padding = self._cached_text[cache_key]
+        cached_text = self._get_cache("text", cache_key)
+        if cached_text is not None:
+            surface, rect, padding = cached_text
             return (rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B])
         surface, rect, padding = self._create_text_render(
             text, style, wrap_width, height
         )
-        self._cached_text[cache_key] = (surface, rect, padding)
+        self._set_cache("text", cache_key, (surface, rect, padding), ping=True)
         return (rect.w + padding[L] + padding[R], rect.h + padding[T] + padding[B])
 
     def _render_text(
         self, bounds: pygame.Rect, _text: str, style: TextStyle, cache_key: int
     ):
-        if cache_key not in self._cached_text:
+        cached_text = self._get_cache("text", cache_key)
+        if cached_text is None:
             raise RuntimeError(
                 "Internal error: text was not resolved during the two passes (cached text not found during render pass)"
             )
-        surface, rect, padding = self._cached_text[cache_key]
+        surface, rect, padding = cached_text
         padded_rect = pygame.Rect(
             bounds.x + padding[L],
             bounds.y + padding[T],
@@ -1171,7 +1151,7 @@ class SurfaceCanvas(Canvas):
             draw_function(
                 self.surface,
                 style.color,
-                (padded_rect.w / 2, padded_rect.h / 2),
+                (padded_rect.x + padded_rect.w / 2, padded_rect.y + padded_rect.h / 2),
                 padded_rect.w / 2,
                 border_width,
             )
@@ -1183,7 +1163,8 @@ class SurfaceCanvas(Canvas):
             else:
                 color = tuple(pygame.Color(style.color))
                 key = padded_rect.w, padded_rect.h, border_width, color
-                if key not in self._cached_antialiased_ellipses:
+                surf = self._get_cache("antialiased_ellipse", key)
+                if surf is None:
                     mult = 4
                     surf = pygame.Surface(
                         (padded_rect.w * mult, padded_rect.h * mult), pygame.SRCALPHA
@@ -1195,10 +1176,8 @@ class SurfaceCanvas(Canvas):
                         border_width,
                     )
                     surf = pygame.transform.smoothscale_by(surf, 1 / mult)
-                    self._cached_antialiased_ellipses[key] = surf
-                self._pinged_antialiased_ellipses.discard(key)
-                ellipse = self._cached_antialiased_ellipses[key]
-                self.surface.blit(ellipse, padded_rect.topleft)
+                    self._set_cache("antialiased_ellipse", key, surf)
+                self.surface.blit(surf, padded_rect.topleft)
 
     def _render_rect(self, bounds: pygame.Rect, _, style: RectStyle):
         if style.color is None:
@@ -1326,3 +1305,365 @@ class SurfaceCanvas(Canvas):
             return
         function = pygame.draw.aaline if style.antialias else pygame.draw.line
         function(self.surface, style.color, point_a, point_b, int(line_size))
+
+    def _image_border_radius(
+        self,
+        draw_image: pygame.Surface,
+        border_radius,
+        size,
+        fit_size,
+        circle_function,
+        scale_by_function,
+    ):
+        tl, tr, bl, br = (
+            border_radius[TL],
+            border_radius[TR],
+            border_radius[BL],
+            border_radius[BR],
+        )
+        tl_mask = pygame.Surface((tl, tl), pygame.SRCALPHA)
+        tr_mask = pygame.Surface((tr, tr), pygame.SRCALPHA)
+        bl_mask = pygame.Surface((bl, bl), pygame.SRCALPHA)
+        br_mask = pygame.Surface((br, br), pygame.SRCALPHA)
+        tl_mask.fill(0)
+        tr_mask.fill(0)
+        bl_mask.fill(0)
+        br_mask.fill(0)
+        draw_image = draw_image.convert_alpha()
+        circle_function(tl_mask, "white", (tl, tl), tl, draw_top_left=True)
+        circle_function(tr_mask, "white", (0, tr), tr, draw_top_right=True)
+        circle_function(bl_mask, "white", (bl, 0), bl, draw_bottom_left=True)
+        circle_function(br_mask, "white", (0, 0), br, draw_bottom_right=True)
+        if fit_size != size:
+            factor = (size[0] / fit_size[0], size[1] / fit_size[1])
+            tl_mask = scale_by_function(tl_mask, factor)
+            tr_mask = scale_by_function(tr_mask, factor)
+            bl_mask = scale_by_function(bl_mask, factor)
+            br_mask = scale_by_function(br_mask, factor)
+        draw_image.blit(tl_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        draw_image.blit(
+            tr_mask,
+            (draw_image.width - tr_mask.width, 0),
+            special_flags=pygame.BLEND_RGBA_MULT,
+        )
+        draw_image.blit(
+            bl_mask,
+            (0, draw_image.height - bl_mask.height),
+            special_flags=pygame.BLEND_RGBA_MULT,
+        )
+        draw_image.blit(
+            br_mask,
+            (draw_image.width - br_mask.width, draw_image.height - br_mask.height),
+            special_flags=pygame.BLEND_RGBA_MULT,
+        )
+        return draw_image
+
+    def _image_ninepatch(
+        self, image: pygame.Surface, size: tuple[int, int], inset: int, scale_function
+    ):
+        rw, rh = size
+        w, h = image.size
+        x_s = w - inset * 2
+        y_s = h - inset * 2
+        rx_s = rw - inset * 2
+        ry_s = rh - inset * 2
+        base = pygame.Surface(size, pygame.SRCALPHA)
+        base.blit(image.subsurface((0, 0, inset, inset)), (0, 0))
+        base.blit(image.subsurface((w - inset, 0, inset, inset)), (rw - inset, 0))
+        base.blit(image.subsurface((0, h - inset, inset, inset)), (0, rh - inset))
+        base.blit(
+            image.subsurface((w - inset, h - inset, inset, inset)),
+            (rw - inset, rh - inset),
+        )
+        if x_s > 0:
+            base.blit(
+                scale_function(image.subsurface((inset, 0, x_s, inset)), (rx_s, inset)),
+                (inset, 0),
+            )
+            base.blit(
+                scale_function(
+                    image.subsurface((inset, h - inset, x_s, inset)), (rx_s, inset)
+                ),
+                (inset, rh - inset),
+            )
+        if y_s > 0:
+            base.blit(
+                scale_function(image.subsurface((0, inset, inset, y_s)), (inset, ry_s)),
+                (0, inset),
+            )
+            base.blit(
+                scale_function(
+                    image.subsurface((w - inset, inset, inset, y_s)), (inset, ry_s)
+                ),
+                (rw - inset, inset),
+            )
+        if x_s > 0 and y_s > 0:
+            base.blit(
+                scale_function(
+                    image.subsurface((inset, inset, x_s, y_s)), (rx_s, ry_s)
+                ),
+                (inset, inset),
+            )
+        return base
+
+    def _transform_image(
+        self,
+        image: pygame.Surface,
+        size: tuple[int, int],
+        fit_size: tuple[int, int],
+        scale_quality: ScaleQuality,
+        angle: float,
+        flip_x: bool,
+        flip_y: bool,
+        ninepatch_inset: int | None,
+        border_radius: tuple[int, int, int, int],
+        color_mod: pygame.typing.ColorLike,
+        alpha_mod: int,
+    ) -> pygame.Surface:
+        scale_function = pygame.transform.smoothscale
+        scale_by_function = pygame.transform.smoothscale_by
+        circle_function = pygame.draw.aacircle
+        if scale_quality == ScaleQuality.NEAREST:
+            scale_function = pygame.transform.scale
+            scale_by_function = pygame.transform.scale_by
+            circle_function = pygame.draw.circle
+
+        draw_image = image
+
+        if image.size != size:
+            if ninepatch_inset is None:
+                draw_image = scale_function(draw_image, size)
+            else:
+                draw_image = self._image_ninepatch(
+                    draw_image, size, ninepatch_inset, scale_function
+                )
+
+        if any(br != 0 for br in border_radius):
+            draw_image = self._image_border_radius(
+                draw_image,
+                border_radius,
+                size,
+                fit_size,
+                circle_function,
+                scale_by_function,
+            )
+
+        if flip_x or flip_y:
+            draw_image = pygame.transform.flip(draw_image, flip_x, flip_y)
+
+        if color_mod is not None:
+            if draw_image is image:
+                draw_image = draw_image.copy()
+            draw_image.fill(color_mod, special_flags=pygame.BLEND_RGBA_MULT)
+
+        if alpha_mod is not None:
+            if draw_image is image:
+                draw_image = draw_image.copy()
+            draw_image.set_alpha(alpha_mod)
+
+        if angle != 0:
+            draw_image = pygame.transform.rotate(draw_image, -angle)
+
+        return draw_image
+
+    def _render_image(
+        self, bounds: pygame.Rect, image: pygame.Surface, style: ImageStyle, padding
+    ):
+        if not isinstance(image, pygame.Surface):
+            raise TypeError("A Surface canvas can only draw Surface objects")
+
+        fit_rect, border_radius, ninepatch_inset = image_parse_style(
+            bounds, padding, image.width, image.height, style
+        )
+
+        transformed_rect, angle, angle_origin, flip_x, flip_y = image_parse_transform(
+            image.width, image.height, style.transform, fit_rect
+        )
+
+        cache_key = (
+            image,
+            transformed_rect.size,
+            fit_rect.size,
+            style.scale_quality,
+            angle,
+            flip_x,
+            flip_y,
+            ninepatch_inset,
+            border_radius,
+            style.color_modifier,
+            style.alpha_modifier,
+        )
+        draw_image = self._get_cache("image", cache_key)
+        if draw_image is None:
+            draw_image = self._transform_image(*cache_key)
+            self._set_cache("image", cache_key, draw_image)
+
+        blend_mode = 0
+        if style.blend_mode is not None:
+            blend_mode = style.blend_mode
+
+        render_ox = render_oy = 0
+        if angle != 0:
+            angle_rad = math.radians(angle)
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            dx = angle_origin[0] - (transformed_rect.w / 2.0)
+            dy = angle_origin[1] - (transformed_rect.h / 2.0)
+            rot_dx = dx * cos_a - dy * sin_a
+            rot_dy = dx * sin_a + dy * cos_a
+            new_ox = (draw_image.width / 2.0) + rot_dx
+            new_oy = (draw_image.height / 2.0) + rot_dy
+            render_ox = angle_origin[0] - new_ox
+            render_oy = angle_origin[1] - new_oy
+
+        self.surface.blit(
+            draw_image,
+            (transformed_rect.left + render_ox, transformed_rect.top + render_oy),
+            special_flags=blend_mode,
+        )
+        if style.repeat in (ImageRepeat.X, ImageRepeat.BOTH):
+            self._image_repeat_x(
+                draw_image,
+                bounds,
+                transformed_rect,
+                angle,
+                style.repeat,
+                render_ox,
+                render_oy,
+                blend_mode,
+            )
+        if style.repeat in (ImageRepeat.Y, ImageRepeat.BOTH):
+            self._image_repeat_y(
+                draw_image,
+                bounds,
+                transformed_rect,
+                0,
+                angle,
+                render_ox,
+                render_oy,
+                blend_mode,
+            )
+
+    def _image_repeat_x(
+        self,
+        image,
+        bounds,
+        transformed_rect,
+        angle,
+        repeat,
+        render_ox,
+        render_oy,
+        blend_mode,
+    ):
+        if angle != 0:
+            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
+            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
+                center=bounds.center
+            )
+        else:
+            space_left_rect = bounds
+        left_space = transformed_rect.x - space_left_rect.x
+        if left_space > 0:
+            left_amount = int(left_space / transformed_rect.w) + 1
+            cursor = -transformed_rect.w * left_amount
+            for i in range(left_amount):
+                draw_loc = image_repeat_translate_angle(
+                    transformed_rect, transformed_rect.move(cursor, 0), angle
+                )
+                self.surface.blit(
+                    image,
+                    (draw_loc.x + render_ox, draw_loc.y + render_oy),
+                    special_flags=blend_mode,
+                )
+                if repeat == ImageRepeat.BOTH:
+                    self._image_repeat_y(
+                        image,
+                        bounds,
+                        transformed_rect,
+                        cursor,
+                        angle,
+                        render_ox,
+                        render_oy,
+                        blend_mode,
+                    )
+                cursor += transformed_rect.w
+                if transformed_rect.x + cursor > space_left_rect.right:
+                    break
+        right_space = space_left_rect.right - transformed_rect.right
+        if right_space > 0:
+            right_amount = int(right_space / transformed_rect.w) + 1
+            cursor = transformed_rect.w * right_amount
+            for i in range(right_amount):
+                draw_loc = image_repeat_translate_angle(
+                    transformed_rect, transformed_rect.move(cursor, 0), angle
+                )
+                self.surface.blit(
+                    image,
+                    (draw_loc.x + render_ox, draw_loc.y + render_oy),
+                    special_flags=blend_mode,
+                )
+                if repeat == ImageRepeat.BOTH:
+                    self._image_repeat_y(
+                        image,
+                        bounds,
+                        transformed_rect,
+                        cursor,
+                        angle,
+                        render_ox,
+                        render_oy,
+                        blend_mode,
+                    )
+                cursor -= transformed_rect.w
+                if transformed_rect.x + cursor + transformed_rect.w < space_left_rect.x:
+                    break
+
+    def _image_repeat_y(
+        self,
+        image,
+        bounds,
+        transformed_rect,
+        cursor_x,
+        angle,
+        render_ox,
+        render_oy,
+        blend_mode,
+    ):
+        if angle != 0:
+            diagonal = math.sqrt(bounds.w**2 + bounds.h**2)
+            space_left_rect = pygame.Rect(0, 0, diagonal, diagonal).move_to(
+                center=bounds.center
+            )
+        else:
+            space_left_rect = bounds
+        top_space = transformed_rect.y - space_left_rect.y
+        if top_space > 0:
+            top_amount = int(top_space / transformed_rect.h) + 1
+            cursor = -transformed_rect.h * top_amount
+            for i in range(top_amount):
+                draw_loc = image_repeat_translate_angle(
+                    transformed_rect, transformed_rect.move(cursor_x, cursor), angle
+                )
+                self.surface.blit(
+                    image,
+                    (draw_loc.x + render_ox, draw_loc.y + render_oy),
+                    special_flags=blend_mode,
+                )
+                cursor += transformed_rect.h
+                if transformed_rect.y + cursor > space_left_rect.bottom:
+                    break
+        bottom_space = space_left_rect.bottom - transformed_rect.bottom
+        if bottom_space > 0:
+            bottom_amount = int(bottom_space / transformed_rect.h) + 1
+            cursor = transformed_rect.h * bottom_amount
+            for i in range(bottom_amount):
+                draw_loc = image_repeat_translate_angle(
+                    transformed_rect, transformed_rect.move(cursor_x, cursor), angle
+                )
+                self.surface.blit(
+                    image,
+                    (draw_loc.x + render_ox, draw_loc.y + render_oy),
+                    special_flags=blend_mode,
+                )
+                cursor -= transformed_rect.h
+                if transformed_rect.y + cursor + transformed_rect.h < space_left_rect.y:
+                    break

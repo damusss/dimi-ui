@@ -37,11 +37,14 @@ class IllegalSizeIntentForMeasure(IllegalLayoutError):
 class MissingActiveContexError(IllegalOperationError):
     def __init__(self):
         super().__init__(
-            "UI operation requires an active context (with dimi.using(): ...)"
+            "UI operation requires an active context (with dimi.using(context): ...)"
         )
 
 
-class MissingElementForWidget(IllegalOperationError):
+class IllegalWidgetOperationError(IllegalOperationError): ...
+
+
+class MissingElementForWidget(IllegalWidgetOperationError):
     def __init__(self, widget: str):
         super().__init__(
             f"'{widget}' widget can only be called in the active context of an element"
@@ -55,7 +58,32 @@ class IllegalComponentShortcutError(IllegalLayoutError):
         )
 
 
-class WidgetRegistrationError(IllegalOperationError): ...
+class IllegalStyleEditError(IllegalOperationError):
+    def __init__(self, style_name: str | None = None, valid_element=True):
+        super().__init__(
+            (
+                "Styles of an element can only be edited before the declaration pass is over (with dimi.using(context): ...)"
+                if valid_element
+                else "The return value of 'Context.get_interaction()' cannot edit the element styles"
+            )
+            if style_name is None
+            else f"The '{style_name}' style of an element cannot be edited after element declaration"
+        )
+
+
+class RegistrationError(IllegalOperationError): ...
+
+
+class WidgetRegistrationError(RegistrationError): ...
+
+
+class CacheRegistrationError(RegistrationError):
+    def __init__(self, cache: str, canvas: type, already=False):
+        super().__init__(
+            f"Cache '{cache}' was already registered on '{canvas.__name__}'"
+            if already
+            else f"Cannot get or set a cache that wasn't registered. Use dimi.register_canvas_cache('{cache}', ({canvas.__name__},)) to register it"
+        )
 
 
 class TextLayoutError(IllegalLayoutError): ...

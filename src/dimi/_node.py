@@ -171,7 +171,6 @@ class Node:
                     cache_key, data, style, wrap_width, height
                 )
                 component.append(cache_key)
-                self.context.canvas._pinged_text_cache_keys.discard(cache_key)
             biggest_w = max(biggest_w, resolved_w)
             biggest_h = max(biggest_h, resolved_h)
 
@@ -478,46 +477,50 @@ class Node:
             return
 
         for child in self.absolute_children:
-            anchored_max_w = margined_max_w
-            anchored_max_h = margined_max_h
+            absolute_max_w, absolute_max_h = (
+                self.measured_width_no_margins,
+                self.measured_height_no_margins,
+            )
+            anchored_max_w = absolute_max_w
+            anchored_max_h = absolute_max_h
             cw_is_fill = type(child.style.width) is Fill
             ch_is_fill = type(child.style.height) is Fill
             if child.style.position.left is not None:
                 child.absolute_anchors[L] = measure_value(
-                    child.style.position.left, margined_max_w, margined_max_h, Axis.X
+                    child.style.position.left, absolute_max_w, absolute_max_h, Axis.X
                 )
                 if cw_is_fill:
                     anchored_max_w -= child.absolute_anchors[L]
             if child.style.position.right is not None:
                 child.absolute_anchors[R] = measure_value(
-                    child.style.position.right, margined_max_w, margined_max_h, Axis.X
+                    child.style.position.right, absolute_max_w, absolute_max_h, Axis.X
                 )
                 if cw_is_fill:
                     anchored_max_w -= child.absolute_anchors[R]
             if child.style.position.top is not None:
                 child.absolute_anchors[T] = measure_value(
-                    child.style.position.top, margined_max_w, margined_max_h, Axis.Y
+                    child.style.position.top, absolute_max_w, absolute_max_h, Axis.Y
                 )
                 if ch_is_fill:
                     anchored_max_h -= child.absolute_anchors[T]
             if child.style.position.bottom is not None:
                 child.absolute_anchors[B] = measure_value(
-                    child.style.position.bottom, margined_max_w, margined_max_h, Axis.Y
+                    child.style.position.bottom, absolute_max_w, absolute_max_h, Axis.Y
                 )
                 if ch_is_fill:
                     anchored_max_h -= child.absolute_anchors[B]
             if child.style.position.center_x is not None:
                 child.absolute_anchors[CX] = measure_value(
                     child.style.position.center_x,
-                    margined_max_w,
-                    margined_max_h,
+                    absolute_max_w,
+                    absolute_max_h,
                     Axis.X,
                 )
             if child.style.position.center_y is not None:
                 child.absolute_anchors[CY] = measure_value(
                     child.style.position.center_y,
-                    margined_max_w,
-                    margined_max_h,
+                    absolute_max_w,
+                    absolute_max_h,
                     Axis.Y,
                 )
             if (
@@ -597,8 +600,16 @@ class Node:
             )
 
     def arrange(self, x: float, y: float, parent_x, parent_y, parent_offset):
-        x += self.margins_px[L] + self.style.self_offset[0] + parent_offset[0]
-        y += self.margins_px[T] + self.style.self_offset[1] + parent_offset[1]
+        if self.style.position is not None and self.style.position.ignore_parent_offset:
+            parent_offset = (0, 0)
+        x_no_offset = x + self.margins_px[L]
+        y_no_offset = y + self.margins_px[T]
+        x = x_no_offset + self.style.self_offset[0] + parent_offset[0]
+        y = y_no_offset + self.style.self_offset[1] + parent_offset[1]
+        right_margined, bottom_margined = (
+            x_no_offset + self.measured_width_no_margins + self.margins_px[R],
+            y_no_offset + self.measured_height_no_margins + self.margins_px[B],
+        )
         self.relative_rect = pygame.Rect(
             x,
             y,
@@ -615,7 +626,7 @@ class Node:
         if not self.relative_children and not self.absolute_children:
             self.children_overflow = (0, 0)
             self.context._node_memory[self.id] = self
-            return
+            return right_margined, bottom_margined
 
         remaining_w = 0
         remaining_h = 0
@@ -705,7 +716,7 @@ class Node:
             elif self.style.align_children == Align.CENTER:
                 cursor_y = self.measured_height_no_margins / 2 - used_h / 2
 
-        lastmost_opposite = 0
+        lastmost_opposite = -math.inf
         for child in self.relative_children:
             x = cursor_x
             y = cursor_y
@@ -729,7 +740,7 @@ class Node:
                     )
                 elif child.style.align_self == Align.CENTER:
                     x = self.measured_width_no_margins / 2 - child.measured_width / 2
-            child.arrange(
+            right, bottom = child.arrange(
                 x,
                 y,
                 self.absolute_rect.x,
@@ -737,11 +748,9 @@ class Node:
                 self.style.children_offset,
             )
             if self.style.axis == Axis.X:
-                bottom = child.relative_rect.bottom
                 if bottom > lastmost_opposite:
                     lastmost_opposite = bottom
             else:
-                right = child.relative_rect.right
                 if right > lastmost_opposite:
                     lastmost_opposite = right
 
@@ -751,8 +760,12 @@ class Node:
             cursor_y = lastmost_opposite
         else:
             cursor_x = lastmost_opposite
-        overflow_x = cursor_x - self.relative_rect.w
-        overflow_y = cursor_y - self.relative_rect.h
+        overflow_x = cursor_x - (
+            self.relative_rect.w - self.pads_px[L] - self.pads_px[R]
+        )
+        overflow_y = cursor_y - (
+            self.relative_rect.h - self.pads_px[T] - self.pads_px[B]
+        )
         self.children_overflow = (
             overflow_x if overflow_x > 0 else 0,
             overflow_y if overflow_y > 0 else 0,
@@ -791,3 +804,4 @@ class Node:
             )
 
         self.context._node_memory[self.id] = self
+        return right_margined, bottom_margined
